@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+.env
+.pytest_cache/
+.mypy_cache/
+.DS_Store
+
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+data/screenshots/*
+!data/screenshots/.gitkeep
+data/exports/*
+!data/exports/.gitkeep
