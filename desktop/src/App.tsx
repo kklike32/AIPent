@@ -27,8 +27,14 @@ const DEFAULT_SETTINGS: AppSettings = {
   insforgeBaseUrl: "",
   insforgeProjectId: "",
   insforgeApiKey: "",
+  insforgeAuthEnabled: true,
+  insforgeAuthToken: "",
+  insforgeCurrentUserId: "",
+  defaultWorkflowVisibility: "private",
+  enableTeamSharing: true,
   cloudSyncEnabled: false,
   hasInsforgeApiKey: false,
+  hasInsforgeAuthToken: false,
 };
 
 const EMPTY_WORKFLOW: FinalWorkflow = {
@@ -158,6 +164,18 @@ export default function App() {
   }, []);
 
   const sessionTimer = useMemo(() => formatDuration(elapsedMs), [elapsedMs]);
+  const authStatusLabel = useMemo(() => {
+    if (!settings.insforgeAuthEnabled) {
+      return "Not connected";
+    }
+    if (!settings.hasInsforgeAuthToken && !settings.insforgeAuthToken) {
+      return "Not connected";
+    }
+    if (settings.insforgeCurrentUserId) {
+      return `Connected as ${settings.insforgeCurrentUserId}`;
+    }
+    return "Connected";
+  }, [settings]);
 
   async function toggleRecording() {
     const currentStatus = statusRef.current;
@@ -337,6 +355,8 @@ export default function App() {
       setWorkflow((current) => ({
         ...current,
         templateTitle: event.title,
+        templateVisibility: event.visibility,
+        templateOwnerId: event.user_id,
       }));
       return;
     }
@@ -389,8 +409,8 @@ export default function App() {
           <div className="app-shell-tab-rail">
             <button
               className={`rounded-full px-5 py-2 text-sm font-bold transition-all duration-300 ${tab === "dashboard"
-                  ? "bg-primary text-primary-foreground shadow-soft"
-                  : "text-muted-foreground hover:text-foreground"
+                ? "bg-primary text-primary-foreground shadow-soft"
+                : "text-muted-foreground hover:text-foreground"
                 }`}
               onClick={() => setTab("dashboard")}
             >
@@ -398,8 +418,8 @@ export default function App() {
             </button>
             <button
               className={`rounded-full px-5 py-2 text-sm font-bold transition-all duration-300 ${tab === "settings"
-                  ? "bg-primary text-primary-foreground shadow-soft"
-                  : "text-muted-foreground hover:text-foreground"
+                ? "bg-primary text-primary-foreground shadow-soft"
+                : "text-muted-foreground hover:text-foreground"
                 }`}
               onClick={() => setTab("settings")}
             >
@@ -414,6 +434,7 @@ export default function App() {
             isBusy={isBusy}
             sessionId={sessionId}
             syncLabel={syncLabel}
+            authStatusLabel={authStatusLabel}
             metrics={metrics}
             errorMessage={errorMessage}
             onStart={() => void handleStart()}

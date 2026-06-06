@@ -61,6 +61,8 @@ class SessionRecorder:
     def run(self) -> str:
         self.config.ensure_directories()
         session = Session(
+            user_id=self.config.insforge_current_user_id,
+            visibility="private",
             sync_enabled=self.config.enable_cloud_sync,
             device_name=platform.node() or None,
             os_name=platform.system(),
@@ -131,6 +133,7 @@ class SessionRecorder:
                     "session_name": session.session_name,
                     "device_name": session.device_name,
                     "os_name": session.os_name,
+                    "visibility": session.visibility,
                 }
             )
         except Exception:
@@ -197,6 +200,8 @@ class SessionRecorder:
                     title=template.title,
                     category=template.category,
                     tags=template.tags,
+                    visibility=template.visibility,
+                    user_id=template.user_id,
                 )
             if handoff is not None:
                 self._emit(
@@ -339,9 +344,11 @@ class SessionRecorder:
         self._purge_expired_raw_data(current)
 
     def _save_chunk_summary(self, summary: ChunkSummary) -> ChunkSummary:
+        summary.user_id = self.config.insforge_current_user_id
         return self.repository.save_chunk_summary(summary)
 
     def _save_final_pseudocode(self, final: FinalPseudocode) -> FinalPseudocode:
+        final.user_id = self.config.insforge_current_user_id
         return self.repository.save_final_pseudocode(final)
 
     def _finalize_workflow_artifacts(
@@ -358,6 +365,21 @@ class SessionRecorder:
             enable_agent_handoff_drafts=self.config.enable_agent_handoff_drafts,
             handoff_threshold=self.config.agent_handoff_automation_score_threshold,
         )
+        visibility = (
+            "team"
+            if self.config.workflow_visibility == "team" and self.config.enable_team_sharing
+            else "private"
+        )
+        user_id = self.config.insforge_current_user_id
+        artifacts.insight.user_id = user_id
+        artifacts.search_index.user_id = user_id
+        artifacts.search_index.visibility = visibility
+        if artifacts.template is not None:
+            artifacts.template.user_id = user_id
+            artifacts.template.visibility = visibility
+            artifacts.template.shared_with_team = visibility == "team"
+        if artifacts.handoff_draft is not None:
+            artifacts.handoff_draft.user_id = user_id
         template = None
         draft = None
         insight = self.repository.save_workflow_insight(artifacts.insight)
@@ -391,6 +413,7 @@ class SessionRecorder:
                 {
                     "id": summary.id,
                     "session_id": summary.session_id,
+                    "user_id": summary.user_id,
                     "chunk_index": summary.chunk_index,
                     "started_at": summary.started_at,
                     "ended_at": summary.ended_at,
@@ -416,6 +439,7 @@ class SessionRecorder:
                 {
                     "id": final.id,
                     "session_id": final.session_id,
+                    "user_id": final.user_id,
                     "pseudocode": final.pseudocode,
                     "plain_text": final.plain_text,
                     "suggestions": final.suggestions,
@@ -445,6 +469,7 @@ class SessionRecorder:
                 {
                     "id": insight.id,
                     "session_id": insight.session_id,
+                    "user_id": insight.user_id,
                     "summary": insight.summary,
                     "main_apps": insight.main_apps,
                     "detected_task_type": insight.detected_task_type,
@@ -481,6 +506,7 @@ class SessionRecorder:
             created = self.insforge_client.upload_workflow_template(
                 {
                     "id": template.id,
+                    "user_id": template.user_id,
                     "session_id": template.session_id,
                     "title": template.title,
                     "description": template.description,
@@ -488,6 +514,8 @@ class SessionRecorder:
                     "tags": template.tags,
                     "pseudocode": template.pseudocode,
                     "plain_text": template.plain_text,
+                    "visibility": template.visibility,
+                    "shared_with_team": template.shared_with_team,
                     "created_from": template.created_from,
                 }
             )
@@ -519,6 +547,7 @@ class SessionRecorder:
                 {
                     "id": draft.id,
                     "session_id": draft.session_id,
+                    "user_id": draft.user_id,
                     "template_id": draft.template_id,
                     "status": draft.status,
                     "proposed_action": draft.proposed_action,
@@ -544,10 +573,12 @@ class SessionRecorder:
             created = self.insforge_client.upload_search_index_record(
                 {
                     "id": record.id,
+                    "user_id": record.user_id,
                     "session_id": record.session_id,
                     "template_id": record.template_id,
                     "searchable_text": record.searchable_text,
                     "tags": record.tags,
+                    "visibility": record.visibility,
                 }
             )
         except requests.HTTPError as exc:

@@ -47,6 +47,7 @@ class LocalSQLiteRepository(TrackerRepository):
                 CREATE TABLE IF NOT EXISTS sessions (
                     id TEXT PRIMARY KEY,
                     user_id TEXT,
+                    visibility TEXT NOT NULL DEFAULT 'private',
                     started_at TEXT NOT NULL,
                     ended_at TEXT,
                     session_name TEXT,
@@ -99,6 +100,7 @@ class LocalSQLiteRepository(TrackerRepository):
                 CREATE TABLE IF NOT EXISTS chunk_summaries (
                     id TEXT PRIMARY KEY,
                     session_id TEXT NOT NULL,
+                    user_id TEXT,
                     chunk_index INTEGER NOT NULL,
                     started_at TEXT NOT NULL,
                     ended_at TEXT NOT NULL,
@@ -117,6 +119,7 @@ class LocalSQLiteRepository(TrackerRepository):
                 CREATE TABLE IF NOT EXISTS final_pseudocode (
                     id TEXT PRIMARY KEY,
                     session_id TEXT NOT NULL,
+                    user_id TEXT,
                     pseudocode TEXT NOT NULL,
                     plain_text TEXT NOT NULL,
                     suggestions TEXT NOT NULL,
@@ -132,6 +135,7 @@ class LocalSQLiteRepository(TrackerRepository):
                 CREATE TABLE IF NOT EXISTS workflow_insights (
                     id TEXT PRIMARY KEY,
                     session_id TEXT NOT NULL,
+                    user_id TEXT,
                     summary TEXT NOT NULL,
                     main_apps TEXT NOT NULL,
                     detected_task_type TEXT NOT NULL,
@@ -151,12 +155,15 @@ class LocalSQLiteRepository(TrackerRepository):
                 CREATE TABLE IF NOT EXISTS workflow_templates (
                     id TEXT PRIMARY KEY,
                     session_id TEXT NOT NULL,
+                    user_id TEXT,
                     title TEXT NOT NULL,
                     description TEXT,
                     category TEXT,
                     tags TEXT NOT NULL,
                     pseudocode TEXT NOT NULL,
                     plain_text TEXT NOT NULL,
+                    visibility TEXT NOT NULL DEFAULT 'private',
+                    shared_with_team INTEGER NOT NULL DEFAULT 0,
                     created_from TEXT NOT NULL DEFAULT 'session_summary',
                     synced INTEGER NOT NULL DEFAULT 0,
                     cloud_id TEXT,
@@ -170,6 +177,7 @@ class LocalSQLiteRepository(TrackerRepository):
                 CREATE TABLE IF NOT EXISTS agent_handoff_queue (
                     id TEXT PRIMARY KEY,
                     session_id TEXT NOT NULL,
+                    user_id TEXT,
                     template_id TEXT,
                     status TEXT NOT NULL,
                     proposed_action TEXT NOT NULL,
@@ -190,9 +198,11 @@ class LocalSQLiteRepository(TrackerRepository):
                 CREATE TABLE IF NOT EXISTS workflow_search_index (
                     id TEXT PRIMARY KEY,
                     session_id TEXT NOT NULL,
+                    user_id TEXT,
                     template_id TEXT,
                     searchable_text TEXT NOT NULL,
                     tags TEXT NOT NULL,
+                    visibility TEXT NOT NULL DEFAULT 'private',
                     synced INTEGER NOT NULL DEFAULT 0,
                     cloud_id TEXT,
                     created_at TEXT NOT NULL,
@@ -201,20 +211,58 @@ class LocalSQLiteRepository(TrackerRepository):
                 )
                 """
             )
+            self._add_column_if_missing(conn, "sessions", "visibility", "TEXT NOT NULL DEFAULT 'private'")
+            self._add_column_if_missing(conn, "chunk_summaries", "user_id", "TEXT")
+            self._add_column_if_missing(conn, "final_pseudocode", "user_id", "TEXT")
+            self._add_column_if_missing(conn, "workflow_insights", "user_id", "TEXT")
+            self._add_column_if_missing(conn, "workflow_templates", "user_id", "TEXT")
+            self._add_column_if_missing(
+                conn,
+                "workflow_templates",
+                "visibility",
+                "TEXT NOT NULL DEFAULT 'private'",
+            )
+            self._add_column_if_missing(
+                conn,
+                "workflow_templates",
+                "shared_with_team",
+                "INTEGER NOT NULL DEFAULT 0",
+            )
+            self._add_column_if_missing(conn, "agent_handoff_queue", "user_id", "TEXT")
+            self._add_column_if_missing(conn, "workflow_search_index", "user_id", "TEXT")
+            self._add_column_if_missing(
+                conn,
+                "workflow_search_index",
+                "visibility",
+                "TEXT NOT NULL DEFAULT 'private'",
+            )
+
+    def _add_column_if_missing(
+        self,
+        conn: sqlite3.Connection,
+        table: str,
+        column: str,
+        definition: str,
+    ) -> None:
+        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        if any(row[1] == column for row in rows):
+            return
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     def create_session(self, session: Session) -> Session:
         with self._connect() as conn:
             conn.execute(
                 """
                 INSERT INTO sessions (
-                    id, user_id, started_at, ended_at, session_name, device_name, os_name,
+                    id, user_id, visibility, started_at, ended_at, session_name, device_name, os_name,
                     sync_enabled, status, cloud_id, synced, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session.id,
                     session.user_id,
+                    session.visibility,
                     session.started_at.isoformat(),
                     session.ended_at.isoformat() if session.ended_at else None,
                     session.session_name,
@@ -234,12 +282,13 @@ class LocalSQLiteRepository(TrackerRepository):
             conn.execute(
                 """
                 UPDATE sessions
-                SET user_id = ?, started_at = ?, ended_at = ?, session_name = ?, device_name = ?,
+                SET user_id = ?, visibility = ?, started_at = ?, ended_at = ?, session_name = ?, device_name = ?,
                     os_name = ?, sync_enabled = ?, status = ?, cloud_id = ?, synced = ?
                 WHERE id = ?
                 """,
                 (
                     session.user_id,
+                    session.visibility,
                     session.started_at.isoformat(),
                     session.ended_at.isoformat() if session.ended_at else None,
                     session.session_name,
@@ -308,14 +357,15 @@ class LocalSQLiteRepository(TrackerRepository):
             conn.execute(
                 """
                 INSERT OR REPLACE INTO chunk_summaries (
-                    id, session_id, chunk_index, started_at, ended_at, summary,
+                    id, session_id, user_id, chunk_index, started_at, ended_at, summary,
                     observed_apps, confidence, synced, cloud_id, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     summary.id,
                     summary.session_id,
+                    summary.user_id,
                     summary.chunk_index,
                     summary.started_at,
                     summary.ended_at,
@@ -334,14 +384,15 @@ class LocalSQLiteRepository(TrackerRepository):
             conn.execute(
                 """
                 INSERT OR REPLACE INTO final_pseudocode (
-                    id, session_id, pseudocode, plain_text, suggestions,
+                    id, session_id, user_id, pseudocode, plain_text, suggestions,
                     synced, cloud_id, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     final.id,
                     final.session_id,
+                    final.user_id,
                     json.dumps(final.pseudocode),
                     final.plain_text,
                     json.dumps(final.suggestions),
@@ -357,15 +408,16 @@ class LocalSQLiteRepository(TrackerRepository):
             conn.execute(
                 """
                 INSERT OR REPLACE INTO workflow_insights (
-                    id, session_id, summary, main_apps, detected_task_type, tags,
+                    id, session_id, user_id, summary, main_apps, detected_task_type, tags,
                     automation_score, automation_reason, recommended_next_action,
                     synced, cloud_id, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     insight.id,
                     insight.session_id,
+                    insight.user_id,
                     insight.summary,
                     json.dumps(insight.main_apps),
                     insight.detected_task_type,
@@ -385,20 +437,23 @@ class LocalSQLiteRepository(TrackerRepository):
             conn.execute(
                 """
                 INSERT OR REPLACE INTO workflow_templates (
-                    id, session_id, title, description, category, tags, pseudocode,
-                    plain_text, created_from, synced, cloud_id, created_at
+                    id, session_id, user_id, title, description, category, tags, pseudocode,
+                    plain_text, visibility, shared_with_team, created_from, synced, cloud_id, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     template.id,
                     template.session_id,
+                    template.user_id,
                     template.title,
                     template.description,
                     template.category,
                     json.dumps(template.tags),
                     json.dumps(template.pseudocode),
                     template.plain_text,
+                    template.visibility,
+                    int(template.shared_with_team),
                     template.created_from,
                     int(template.synced),
                     template.cloud_id,
@@ -412,15 +467,16 @@ class LocalSQLiteRepository(TrackerRepository):
             conn.execute(
                 """
                 INSERT OR REPLACE INTO agent_handoff_queue (
-                    id, session_id, template_id, status, proposed_action, action_plan,
+                    id, session_id, user_id, template_id, status, proposed_action, action_plan,
                     requires_user_approval, approved_at, executed_at,
                     synced, cloud_id, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     draft.id,
                     draft.session_id,
+                    draft.user_id,
                     draft.template_id,
                     draft.status,
                     draft.proposed_action,
@@ -443,17 +499,19 @@ class LocalSQLiteRepository(TrackerRepository):
             conn.execute(
                 """
                 INSERT OR REPLACE INTO workflow_search_index (
-                    id, session_id, template_id, searchable_text, tags,
+                    id, session_id, user_id, template_id, searchable_text, tags, visibility,
                     synced, cloud_id, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.id,
                     record.session_id,
+                    record.user_id,
                     record.template_id,
                     record.searchable_text,
                     json.dumps(record.tags),
+                    record.visibility,
                     int(record.synced),
                     record.cloud_id,
                     record.created_at.isoformat(),
@@ -675,6 +733,47 @@ class LocalSQLiteRepository(TrackerRepository):
             ).fetchall()
         return [self._row_to_workflow_template(row) for row in rows]
 
+    def list_workflow_templates_mine(self, user_id: str, limit: int = 20) -> list[WorkflowTemplate]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM workflow_templates
+                WHERE user_id = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (user_id, limit),
+            ).fetchall()
+        return [self._row_to_workflow_template(row) for row in rows]
+
+    def list_workflow_templates_team(
+        self,
+        user_id: str | None,
+        limit: int = 20,
+    ) -> list[WorkflowTemplate]:
+        with self._connect() as conn:
+            if user_id:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM workflow_templates
+                    WHERE visibility = 'team' OR user_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    (user_id, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM workflow_templates
+                    WHERE visibility = 'team'
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                ).fetchall()
+        return [self._row_to_workflow_template(row) for row in rows]
+
     def search_workflow_templates(self, query: str, limit: int = 10) -> list[WorkflowTemplate]:
         pattern = f"%{query.lower()}%"
         with self._connect() as conn:
@@ -689,6 +788,64 @@ class LocalSQLiteRepository(TrackerRepository):
                 """,
                 (pattern, limit),
             ).fetchall()
+        return [self._row_to_workflow_template(row) for row in rows]
+
+    def search_workflow_templates_mine(
+        self,
+        query: str,
+        user_id: str,
+        limit: int = 10,
+    ) -> list[WorkflowTemplate]:
+        pattern = f"%{query.lower()}%"
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT wt.*
+                FROM workflow_search_index wsi
+                JOIN workflow_templates wt ON wt.id = wsi.template_id
+                WHERE lower(wsi.searchable_text) LIKE ?
+                  AND wsi.user_id = ?
+                ORDER BY wsi.created_at DESC
+                LIMIT ?
+                """,
+                (pattern, user_id, limit),
+            ).fetchall()
+        return [self._row_to_workflow_template(row) for row in rows]
+
+    def search_workflow_templates_team(
+        self,
+        query: str,
+        user_id: str | None,
+        limit: int = 10,
+    ) -> list[WorkflowTemplate]:
+        pattern = f"%{query.lower()}%"
+        with self._connect() as conn:
+            if user_id:
+                rows = conn.execute(
+                    """
+                    SELECT wt.*
+                    FROM workflow_search_index wsi
+                    JOIN workflow_templates wt ON wt.id = wsi.template_id
+                    WHERE lower(wsi.searchable_text) LIKE ?
+                      AND (wsi.visibility = 'team' OR wsi.user_id = ?)
+                    ORDER BY wsi.created_at DESC
+                    LIMIT ?
+                    """,
+                    (pattern, user_id, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT wt.*
+                    FROM workflow_search_index wsi
+                    JOIN workflow_templates wt ON wt.id = wsi.template_id
+                    WHERE lower(wsi.searchable_text) LIKE ?
+                      AND wsi.visibility = 'team'
+                    ORDER BY wsi.created_at DESC
+                    LIMIT ?
+                    """,
+                    (pattern, limit),
+                ).fetchall()
         return [self._row_to_workflow_template(row) for row in rows]
 
     def mark_session_synced(self, session_id: str, cloud_id: str | None = None) -> None:
@@ -818,6 +975,7 @@ class LocalSQLiteRepository(TrackerRepository):
         return Session(
             id=row["id"],
             user_id=row["user_id"],
+            visibility=row["visibility"],
             started_at=datetime.fromisoformat(row["started_at"]),
             ended_at=datetime.fromisoformat(row["ended_at"]) if row["ended_at"] else None,
             session_name=row["session_name"],
@@ -861,6 +1019,7 @@ class LocalSQLiteRepository(TrackerRepository):
         return ChunkSummary(
             id=row["id"],
             session_id=row["session_id"],
+            user_id=row["user_id"],
             chunk_index=row["chunk_index"],
             started_at=row["started_at"],
             ended_at=row["ended_at"],
@@ -876,6 +1035,7 @@ class LocalSQLiteRepository(TrackerRepository):
         return FinalPseudocode(
             id=row["id"],
             session_id=row["session_id"],
+            user_id=row["user_id"],
             pseudocode=json.loads(row["pseudocode"]),
             plain_text=row["plain_text"],
             suggestions=json.loads(row["suggestions"]),
@@ -888,6 +1048,7 @@ class LocalSQLiteRepository(TrackerRepository):
         return WorkflowInsight(
             id=row["id"],
             session_id=row["session_id"],
+            user_id=row["user_id"],
             summary=row["summary"],
             main_apps=json.loads(row["main_apps"]),
             detected_task_type=row["detected_task_type"],
@@ -904,12 +1065,15 @@ class LocalSQLiteRepository(TrackerRepository):
         return WorkflowTemplate(
             id=row["id"],
             session_id=row["session_id"],
+            user_id=row["user_id"],
             title=row["title"],
             description=row["description"],
             category=row["category"],
             tags=json.loads(row["tags"]),
             pseudocode=json.loads(row["pseudocode"]),
             plain_text=row["plain_text"],
+            visibility=row["visibility"],
+            shared_with_team=bool(row["shared_with_team"]),
             created_from=row["created_from"],
             synced=bool(row["synced"]),
             cloud_id=row["cloud_id"],
@@ -920,6 +1084,7 @@ class LocalSQLiteRepository(TrackerRepository):
         return AgentHandoffDraft(
             id=row["id"],
             session_id=row["session_id"],
+            user_id=row["user_id"],
             template_id=row["template_id"],
             status=row["status"],
             proposed_action=row["proposed_action"],
@@ -939,9 +1104,11 @@ class LocalSQLiteRepository(TrackerRepository):
         return WorkflowSearchIndexRecord(
             id=row["id"],
             session_id=row["session_id"],
+            user_id=row["user_id"],
             template_id=row["template_id"],
             searchable_text=row["searchable_text"],
             tags=json.loads(row["tags"]),
+            visibility=row["visibility"],
             synced=bool(row["synced"]),
             cloud_id=row["cloud_id"],
             created_at=datetime.fromisoformat(row["created_at"]),

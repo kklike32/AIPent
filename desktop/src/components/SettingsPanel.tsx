@@ -166,6 +166,41 @@ export function SettingsPanel({ settings, isSaving, onChange, onSave, onClose }:
                 onChange={(event) => onChange(update(settings, "insforgeApiKey", event.target.value))}
               />
             </label>
+            <label className="text-sm text-accent-foreground">
+              <span className="mb-1 block font-medium">Auth token (from existing InsForge frontend login)</span>
+              <input
+                className="organic-input"
+                type="password"
+                placeholder={
+                  settings.hasInsforgeAuthToken
+                    ? "Saved token is masked. Enter a new token to replace it."
+                    : "Paste short-lived session token"
+                }
+                value={settings.insforgeAuthToken}
+                onChange={(event) => onChange(update(settings, "insforgeAuthToken", event.target.value))}
+              />
+            </label>
+            <label className="text-sm text-accent-foreground">
+              <span className="mb-1 block font-medium">Current user ID</span>
+              <input
+                className="organic-input"
+                value={settings.insforgeCurrentUserId}
+                onChange={(event) =>
+                  onChange(update(settings, "insforgeCurrentUserId", event.target.value))
+                }
+              />
+            </label>
+            <label className="flex items-center gap-3 rounded-[1.2rem] border border-border/70 bg-white/68 px-4 py-3 text-sm font-semibold text-accent-foreground">
+              <input
+                className="h-4 w-4 rounded border-border"
+                type="checkbox"
+                checked={settings.insforgeAuthEnabled}
+                onChange={(event) =>
+                  onChange(update(settings, "insforgeAuthEnabled", event.target.checked))
+                }
+              />
+              Require InsForge auth token
+            </label>
             <label className="flex items-center gap-3 rounded-[1.2rem] border border-border/70 bg-white/68 px-4 py-3 text-sm font-semibold text-accent-foreground">
               <input
                 className="h-4 w-4 rounded border-border"
@@ -177,6 +212,40 @@ export function SettingsPanel({ settings, isSaving, onChange, onSave, onClose }:
               />
               Cloud sync enabled
             </label>
+          </div>
+        </div>
+
+        <div className="rounded-[1.7rem] border border-border/70 bg-muted/65 p-5">
+          <h3 className="text-lg font-semibold text-foreground">Workflow sharing</h3>
+          <div className="mt-4 grid gap-4">
+            <label className="text-sm text-accent-foreground">
+              <span className="mb-1 block font-medium">Visibility</span>
+              <select
+                className="organic-input"
+                value={settings.defaultWorkflowVisibility}
+                onChange={(event) =>
+                  onChange(update(settings, "defaultWorkflowVisibility", event.target.value as "private" | "team"))
+                }
+              >
+                <option value="private">Private</option>
+                <option value="team">Team</option>
+              </select>
+            </label>
+            <label className="flex items-center gap-3 rounded-[1.2rem] border border-border/70 bg-white/68 px-4 py-3 text-sm font-semibold text-accent-foreground">
+              <input
+                className="h-4 w-4 rounded border-border"
+                type="checkbox"
+                checked={settings.enableTeamSharing}
+                onChange={(event) =>
+                  onChange(update(settings, "enableTeamSharing", event.target.checked))
+                }
+              />
+              Enable team sharing
+            </label>
+            <p className="rounded-[1.2rem] border border-border/70 bg-white/68 px-4 py-3 text-xs leading-6 text-muted-foreground">
+              Private workflows are only visible to you. Team workflows publish the safe skill
+              template and search index, never raw recordings.
+            </p>
           </div>
         </div>
 

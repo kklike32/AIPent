@@ -51,6 +51,7 @@ ALLOWED_REMOTE_FIELDS = {
         "session_name",
         "device_name",
         "os_name",
+        "visibility",
     },
     "chunk_summaries": {
         "id",
@@ -61,6 +62,7 @@ ALLOWED_REMOTE_FIELDS = {
         "summary",
         "observed_apps",
         "confidence",
+        "user_id",
     },
     "final_pseudocode": {
         "id",
@@ -68,6 +70,7 @@ ALLOWED_REMOTE_FIELDS = {
         "pseudocode",
         "plain_text",
         "suggestions",
+        "user_id",
     },
     "workflow_insights": {
         "id",
@@ -79,6 +82,7 @@ ALLOWED_REMOTE_FIELDS = {
         "automation_score",
         "automation_reason",
         "recommended_next_action",
+        "user_id",
     },
     "workflow_templates": {
         "id",
@@ -89,6 +93,9 @@ ALLOWED_REMOTE_FIELDS = {
         "tags",
         "pseudocode",
         "plain_text",
+        "user_id",
+        "visibility",
+        "shared_with_team",
         "created_from",
     },
     "agent_handoff_queue": {
@@ -101,6 +108,7 @@ ALLOWED_REMOTE_FIELDS = {
         "requires_user_approval",
         "approved_at",
         "executed_at",
+        "user_id",
     },
     "workflow_search_index": {
         "id",
@@ -108,6 +116,8 @@ ALLOWED_REMOTE_FIELDS = {
         "template_id",
         "searchable_text",
         "tags",
+        "user_id",
+        "visibility",
     },
 }
 

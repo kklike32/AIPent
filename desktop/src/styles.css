@@ -108,7 +108,8 @@ h4 {
 
 @layer components {
   .organic-surface {
-    @apply border border-border/60 bg-[rgba(255,255,250,0.86)] shadow-soft backdrop-blur;
+    @apply border border-border/60 shadow-soft backdrop-blur;
+    background-color: rgba(255, 255, 250, 0.86);
   }
 
   .organic-pill {
@@ -120,7 +121,11 @@ h4 {
   }
 
   .btn-organic-primary {
-    @apply h-12 rounded-full bg-primary px-8 text-base font-bold text-primary-foreground shadow-soft transition-all duration-300 hover:scale-105 hover:shadow-[0_6px_24px_-4px_rgba(93,112,82,0.25)] active:scale-95 disabled:cursor-not-allowed disabled:opacity-60;
+    @apply h-12 rounded-full bg-primary px-8 text-base font-bold text-primary-foreground shadow-soft transition-all duration-300 hover:scale-105 active:scale-95 disabled:cursor-not-allowed disabled:opacity-60;
+  }
+
+  .btn-organic-primary:hover {
+    box-shadow: 0 6px 24px -4px rgba(93, 112, 82, 0.25);
   }
 
   .btn-organic-outline {

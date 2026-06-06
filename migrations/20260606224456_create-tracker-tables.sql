@@ -1,6 +1,7 @@
 create table if not exists chunk_summaries (
   id uuid primary key,
   session_id uuid references sessions(id),
+  user_id uuid references auth.users(id),
   chunk_index integer not null,
   started_at timestamptz not null,
   ended_at timestamptz not null,
@@ -13,6 +14,7 @@ create table if not exists chunk_summaries (
 create table if not exists final_pseudocode (
   id uuid primary key,
   session_id uuid references sessions(id),
+  user_id uuid references auth.users(id),
   pseudocode jsonb not null,
   plain_text text not null,
   suggestions jsonb,
@@ -22,12 +24,15 @@ create table if not exists final_pseudocode (
 create table if not exists workflow_templates (
   id uuid primary key,
   session_id uuid references sessions(id),
+  user_id uuid references auth.users(id),
   title text not null,
   description text,
   category text,
   tags jsonb default '[]'::jsonb,
   pseudocode jsonb not null,
   plain_text text not null,
+  visibility text not null default 'private',
+  shared_with_team boolean not null default false,
   created_from text default 'session_summary',
   created_at timestamptz default now()
 );
@@ -35,6 +40,7 @@ create table if not exists workflow_templates (
 create table if not exists workflow_insights (
   id uuid primary key,
   session_id uuid references sessions(id),
+  user_id uuid references auth.users(id),
   summary text not null,
   main_apps jsonb default '[]'::jsonb,
   detected_task_type text,
@@ -48,6 +54,7 @@ create table if not exists workflow_insights (
 create table if not exists agent_handoff_queue (
   id uuid primary key,
   session_id uuid references sessions(id),
+  user_id uuid references auth.users(id),
   template_id uuid references workflow_templates(id),
   status text default 'draft',
   proposed_action text not null,
@@ -61,8 +68,10 @@ create table if not exists agent_handoff_queue (
 create table if not exists workflow_search_index (
   id uuid primary key,
   session_id uuid references sessions(id),
+  user_id uuid references auth.users(id),
   template_id uuid references workflow_templates(id),
   searchable_text text not null,
   tags jsonb default '[]'::jsonb,
+  visibility text not null default 'private',
   created_at timestamptz default now()
 );

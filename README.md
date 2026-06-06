@@ -57,6 +57,51 @@ With InsForge, the app can:
 - share safe workflow documentation across a team
 - prepare approved workflows for future agent execution
 
+## InsForge Auth and Skill Ownership
+
+The project reuses the existing InsForge authentication setup from the shared frontend application.
+
+Every synced workflow record is associated with an authenticated InsForge user. This lets the
+system track who created each workflow, who owns each repeatable skill, and which skills are
+private versus shared with the team.
+
+Raw desktop data is never uploaded. Auth only applies to safe backend records:
+
+- chunk summaries
+- final pseudocode
+- workflow insights
+- workflow templates
+- search index records
+- agent handoff drafts
+
+Default visibility is private. Users can explicitly publish a skill template to the team library.
+
+## Sharing Model
+
+Private:
+
+- session metadata
+- chunk summaries
+- final pseudocode
+- workflow insights
+- agent handoff drafts
+- visible only to creator
+
+Team:
+
+- workflow template
+- search index record
+- title, description, tags, pseudocode, automation score
+- visible to authenticated users in the project/team
+
+Never shared:
+
+- screenshots
+- raw OCR
+- raw keyboard events
+- raw mouse events
+- raw local activity logs
+
 ## Setup
 
 ### Requirements
@@ -118,7 +163,11 @@ GOOGLE_APPLICATION_CREDENTIALS=
 INSFORGE_BASE_URL=
 INSFORGE_PROJECT_ID=
 INSFORGE_API_KEY=
+INSFORGE_AUTH_ENABLED=true
 INSFORGE_AUTH_TOKEN=
+INSFORGE_CURRENT_USER_ID=
+DEFAULT_WORKFLOW_VISIBILITY=private
+ENABLE_TEAM_SHARING=true
 INSFORGE_SUMMARIES_TABLE=chunk_summaries
 INSFORGE_FINAL_TABLE=final_pseudocode
 INSFORGE_WORKFLOW_TEMPLATES_TABLE=workflow_templates
@@ -141,6 +190,8 @@ Start tracking:
 ```bash
 tracker start --llm-provider mock
 tracker start --cloud-sync --llm-provider vertex_gemini
+tracker start --cloud-sync --visibility private
+tracker start --cloud-sync --visibility team
 ```
 
 Generate final pseudocode from stored chunk summaries:
@@ -154,13 +205,19 @@ Sync privacy-safe workflow records:
 ```bash
 tracker sync-summaries --session-id <session_id>
 tracker sync
+
+tracker auth login
+tracker auth status
+tracker auth logout
 ```
 
 Workflow intelligence commands:
 
 ```bash
-tracker workflows list
-tracker workflows search "excel chart"
+tracker workflows list --mine
+tracker workflows list --team
+tracker workflows search "excel chart" --scope mine
+tracker workflows search "excel chart" --scope team
 tracker workflows show <workflow_id>
 tracker workflows templates
 tracker workflows insights --session-id <session_id>

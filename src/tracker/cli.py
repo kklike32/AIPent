@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from .auth_session import AuthSession, clear_auth_session, load_auth_session, save_auth_session
 from .config import TrackerConfig
 from .jsonl import build_jsonl_sink
 from .llm import build_llm_client
@@ -21,9 +22,14 @@ from .sync import SyncService
 from .workflows import build_workflow_artifacts
 
 app = typer.Typer(help="Track desktop usage sessions and summarize workflows.")
+auth_app = typer.Typer(help="Manage InsForge auth token reuse for desktop sync.")
 workflows_app = typer.Typer(help="Inspect privacy-safe workflow intelligence records.")
+app.add_typer(auth_app, name="auth")
 app.add_typer(workflows_app, name="workflows")
 console = Console()
+
+ALLOWED_VISIBILITY = {"private", "team"}
+ALLOWED_WORKFLOW_SCOPE = {"mine", "team"}
 
 
 def _build_config(
@@ -32,8 +38,14 @@ def _build_config(
     llm_provider: Optional[str] = None,
     screenshot_interval: Optional[int] = None,
     chunk_interval: Optional[int] = None,
+    workflow_visibility: Optional[str] = None,
 ) -> TrackerConfig:
     config = TrackerConfig.from_env()
+    auth_session = load_auth_session()
+    if auth_session and not config.insforge_auth_token:
+        config.insforge_auth_token = auth_session.token
+    if auth_session and not config.insforge_current_user_id:
+        config.insforge_current_user_id = auth_session.user_id
     if db_path:
         config.db_path = Path(db_path)
     if cloud_sync is not None:
@@ -44,6 +56,10 @@ def _build_config(
         config.screenshot_interval_seconds = screenshot_interval
     if chunk_interval is not None:
         config.chunk_interval_seconds = chunk_interval
+    if workflow_visibility:
+        config.workflow_visibility = workflow_visibility
+    else:
+        config.workflow_visibility = config.default_workflow_visibility
     config.ensure_directories()
     return config
 
@@ -64,10 +80,25 @@ def _maybe_client(config: TrackerConfig) -> InsForgeClient | None:
     return InsForgeClient.from_config(config)
 
 
+def _validate_visibility(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized not in ALLOWED_VISIBILITY:
+        raise typer.BadParameter("Visibility must be one of: private, team.")
+    return normalized
+
+
+def _validate_scope(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized not in ALLOWED_WORKFLOW_SCOPE:
+        raise typer.BadParameter("Scope must be one of: mine, team.")
+    return normalized
+
+
 def _schema_sql() -> str:
     return """create table if not exists sessions (
   id uuid primary key,
-  user_id uuid nullable,
+    user_id uuid references auth.users(id),
+    visibility text not null default 'private',
   started_at timestamptz not null,
   ended_at timestamptz nullable,
   session_name text nullable,
@@ -79,6 +110,7 @@ def _schema_sql() -> str:
 create table if not exists chunk_summaries (
   id uuid primary key,
   session_id uuid references sessions(id),
+    user_id uuid references auth.users(id),
   chunk_index integer not null,
   started_at timestamptz not null,
   ended_at timestamptz not null,
@@ -91,6 +123,7 @@ create table if not exists chunk_summaries (
 create table if not exists final_pseudocode (
   id uuid primary key,
   session_id uuid references sessions(id),
+    user_id uuid references auth.users(id),
   pseudocode jsonb not null,
   plain_text text not null,
   suggestions jsonb nullable,
@@ -100,12 +133,15 @@ create table if not exists final_pseudocode (
 create table if not exists workflow_templates (
   id uuid primary key,
   session_id uuid references sessions(id),
+    user_id uuid references auth.users(id),
   title text not null,
   description text nullable,
   category text nullable,
   tags jsonb default '[]'::jsonb,
   pseudocode jsonb not null,
   plain_text text not null,
+    visibility text not null default 'private',
+    shared_with_team boolean not null default false,
   created_from text default 'session_summary',
   created_at timestamptz default now()
 );
@@ -113,6 +149,7 @@ create table if not exists workflow_templates (
 create table if not exists workflow_insights (
   id uuid primary key,
   session_id uuid references sessions(id),
+    user_id uuid references auth.users(id),
   summary text not null,
   main_apps jsonb default '[]'::jsonb,
   detected_task_type text nullable,
@@ -126,6 +163,7 @@ create table if not exists workflow_insights (
 create table if not exists agent_handoff_queue (
   id uuid primary key,
   session_id uuid references sessions(id),
+    user_id uuid references auth.users(id),
   template_id uuid nullable references workflow_templates(id),
   status text default 'draft',
   proposed_action text not null,
@@ -139,9 +177,11 @@ create table if not exists agent_handoff_queue (
 create table if not exists workflow_search_index (
   id uuid primary key,
   session_id uuid references sessions(id),
+    user_id uuid references auth.users(id),
   template_id uuid nullable references workflow_templates(id),
   searchable_text text not null,
   tags jsonb default '[]'::jsonb,
+    visibility text not null default 'private',
   created_at timestamptz default now()
 );
 """
@@ -193,14 +233,20 @@ tracker start --cloud-sync --llm-provider vertex_gemini
 def _render_template_table(records: list[object]) -> None:
     table = Table(title="Workflow Templates")
     table.add_column("Title")
+    table.add_column("Created By")
+    table.add_column("Visibility")
     table.add_column("Category")
     table.add_column("Automation Score")
     table.add_column("Created At")
     for record in records:
         created_at = getattr(record, "created_at", "") or ""
         automation_score = getattr(record, "automation_score", "")
+        created_by = getattr(record, "owner_email", None) or getattr(record, "user_id", "")
+        visibility = getattr(record, "visibility", "private")
         table.add_row(
             str(getattr(record, "title", "")),
+            str(created_by or ""),
+            str(visibility),
             str(getattr(record, "category", "")),
             str(automation_score),
             str(created_at),
@@ -227,6 +273,17 @@ def _generate_workflow_outputs(
         enable_agent_handoff_drafts=config.enable_agent_handoff_drafts,
         handoff_threshold=config.agent_handoff_automation_score_threshold,
     )
+    visibility = "team" if config.workflow_visibility == "team" and config.enable_team_sharing else "private"
+    user_id = config.insforge_current_user_id
+    artifacts.insight.user_id = user_id
+    artifacts.search_index.user_id = user_id
+    artifacts.search_index.visibility = visibility
+    if artifacts.template is not None:
+        artifacts.template.user_id = user_id
+        artifacts.template.visibility = visibility
+        artifacts.template.shared_with_team = visibility == "team"
+    if artifacts.handoff_draft is not None:
+        artifacts.handoff_draft.user_id = user_id
     insight = repository.save_workflow_insight(artifacts.insight)
     template = None
     if artifacts.template is not None:
@@ -259,6 +316,110 @@ def init_backend(
         console.print("[yellow]Missing InsForge env vars.[/yellow] Setup artifacts regenerated.")
 
 
+@auth_app.command("login")
+def auth_login(
+    token: Optional[str] = typer.Option(
+        None,
+        "--token",
+        help="InsForge auth token copied from an existing authenticated frontend session.",
+    ),
+) -> None:
+    """Store an InsForge auth token for this desktop tracker session."""
+    auth_token = (token or "").strip()
+    if not auth_token:
+        auth_token = typer.prompt("Paste InsForge auth token", hide_input=True).strip()
+    if not auth_token:
+        raise typer.BadParameter("Auth token is required.")
+
+    config = _build_config(None)
+    user_id: str | None = None
+    email: str | None = None
+
+    if config.has_insforge_credentials():
+        client = InsForgeClient(
+            base_url=str(config.insforge_base_url),
+            api_key=str(config.insforge_api_key),
+            auth_token=auth_token,
+            current_user_id=config.insforge_current_user_id,
+            auth_enabled=True,
+            summaries_table=config.insforge_summaries_table,
+            final_table=config.insforge_final_table,
+            workflow_insights_table=config.insforge_workflow_insights_table,
+            workflow_templates_table=config.insforge_workflow_templates_table,
+            agent_handoff_table=config.insforge_agent_handoff_table,
+            workflow_search_table=config.insforge_workflow_search_table,
+        )
+        try:
+            user = client.get_current_user()
+            user_id = user.get("id") if isinstance(user.get("id"), str) else None
+            email = user.get("email") if isinstance(user.get("email"), str) else None
+        except Exception as exc:
+            raise typer.BadParameter(f"Failed to validate InsForge auth token: {exc}") from exc
+
+    save_auth_session(AuthSession(token=auth_token, user_id=user_id, email=email))
+    console.print("[bold green]InsForge auth token saved.[/bold green]")
+    if user_id or email:
+        console.print(f"User: {email or '(email unavailable)'}")
+        console.print(f"User ID: {user_id or '(id unavailable)'}")
+
+
+@auth_app.command("status")
+def auth_status() -> None:
+    """Show InsForge auth status for the desktop tracker."""
+    config = _build_config(None)
+    session = load_auth_session()
+    if session is None:
+        console.print("[yellow]Not connected.[/yellow] No local InsForge auth token is stored.")
+        if config.insforge_project_id:
+            console.print(f"Project: {config.insforge_project_id}")
+        return
+
+    user_id = session.user_id
+    email = session.email
+    token_validated = False
+    token_expired = False
+
+    if config.has_insforge_credentials():
+        client = InsForgeClient(
+            base_url=str(config.insforge_base_url),
+            api_key=str(config.insforge_api_key),
+            auth_token=session.token,
+            current_user_id=session.user_id,
+            auth_enabled=True,
+            summaries_table=config.insforge_summaries_table,
+            final_table=config.insforge_final_table,
+            workflow_insights_table=config.insforge_workflow_insights_table,
+            workflow_templates_table=config.insforge_workflow_templates_table,
+            agent_handoff_table=config.insforge_agent_handoff_table,
+            workflow_search_table=config.insforge_workflow_search_table,
+        )
+        try:
+            user = client.get_current_user()
+            token_validated = True
+            user_id = user.get("id") if isinstance(user.get("id"), str) else user_id
+            email = user.get("email") if isinstance(user.get("email"), str) else email
+        except Exception:
+            token_expired = True
+
+    if token_expired:
+        console.print("[red]Token expired or invalid.[/red]")
+    elif token_validated:
+        console.print("[bold green]Connected.[/bold green]")
+    else:
+        console.print("[bold green]Connected (unverified).[/bold green]")
+
+    console.print(f"Project: {config.insforge_project_id or '(not configured)'}")
+    console.print(f"User: {email or '(email unavailable)'}")
+    console.print(f"User ID: {user_id or '(id unavailable)'}")
+
+
+@auth_app.command("logout")
+def auth_logout() -> None:
+    """Clear local InsForge auth token storage."""
+    clear_auth_session()
+    console.print("[bold green]InsForge auth token cleared.[/bold green]")
+
+
 @app.command()
 def start(
     db_path: Optional[str] = typer.Option(None, help="Path to local SQLite DB."),
@@ -283,6 +444,11 @@ def start(
         None,
         help="LLM provider override, for example `vertex_gemini` or `mock`.",
     ),
+    visibility: str = typer.Option(
+        "private",
+        "--visibility",
+        help="Workflow visibility for safe shared records: private or team.",
+    ),
     jsonl: bool = typer.Option(
         False,
         "--jsonl",
@@ -297,13 +463,17 @@ def start(
         cloud_sync_override = True
     if no_cloud_sync:
         cloud_sync_override = False
+    normalized_visibility = _validate_visibility(visibility)
     config = _build_config(
         db_path,
         cloud_sync=cloud_sync_override,
         llm_provider=llm_provider,
         screenshot_interval=screenshot_interval,
         chunk_interval=chunk_interval,
+        workflow_visibility=normalized_visibility,
     )
+    if normalized_visibility == "team" and not config.enable_team_sharing:
+        raise typer.BadParameter("Team sharing is disabled. Set ENABLE_TEAM_SHARING=true to use --visibility team.")
     config.ocr_enabled = ocr
     repository = LocalSQLiteRepository(config.db_path)
     client = _maybe_client(config)
@@ -449,21 +619,37 @@ def export(
 def workflows_list(
     db_path: Optional[str] = typer.Option(None, help="Path to local SQLite DB."),
     limit: int = typer.Option(10, help="Maximum workflows to display."),
+    mine: bool = typer.Option(False, "--mine", help="List only workflows created by current user."),
+    team: bool = typer.Option(False, "--team", help="List team-visible workflows."),
 ) -> None:
     """Show recent synced workflows from InsForge, or local templates as fallback."""
     config = _build_config(db_path, cloud_sync=True)
     repository = LocalSQLiteRepository(config.db_path)
     client = _maybe_client(config)
+    if mine and team:
+        raise typer.BadParameter("Choose either --mine or --team.")
+    scope = "team" if team else "mine"
     records: list[object] = []
     if client:
-        templates = client.list_workflow_templates(limit=limit)
+        templates = client.list_workflow_templates(limit=limit, scope=scope)
         for template in templates:
             session_id = str(template.get("session_id", ""))
             insights = client.list_workflow_insights(session_id=session_id, limit=1) if session_id else []
             template["automation_score"] = insights[0].get("automation_score", "") if insights else ""
             records.append(SimpleNamespace(**template))
     else:
-        templates = repository.list_workflow_templates(limit=limit)
+        if scope == "team":
+            templates = repository.list_workflow_templates_team(
+                config.insforge_current_user_id,
+                limit=limit,
+            )
+        else:
+            if not config.insforge_current_user_id:
+                raise typer.BadParameter("No current user is set. Run `tracker auth login` first.")
+            templates = repository.list_workflow_templates_mine(
+                config.insforge_current_user_id,
+                limit=limit,
+            )
         for template in templates:
             insight = repository.get_workflow_insight(template.session_id)
             setattr(template, "automation_score", insight.automation_score if insight else "")
@@ -476,18 +662,33 @@ def workflows_search(
     query: str,
     db_path: Optional[str] = typer.Option(None, help="Path to local SQLite DB."),
     limit: int = typer.Option(10, help="Maximum workflows to display."),
+    scope: str = typer.Option("mine", "--scope", help="Search scope: mine or team."),
 ) -> None:
     """Search privacy-safe workflow history."""
     config = _build_config(db_path, cloud_sync=True)
     repository = LocalSQLiteRepository(config.db_path)
     client = _maybe_client(config)
+    normalized_scope = _validate_scope(scope)
     if client:
-        matches = client.search_workflows(query, limit=limit)
+        matches = client.search_workflows(query, limit=limit, scope=normalized_scope)
         template_ids = [match.get("template_id") for match in matches if match.get("template_id")]
         templates = [client.get_workflow_template(str(template_id)) for template_id in template_ids]
         records = [SimpleNamespace(**template) for template in templates if template]
     else:
-        records = repository.search_workflow_templates(query, limit=limit)
+        if normalized_scope == "team":
+            records = repository.search_workflow_templates_team(
+                query,
+                user_id=config.insforge_current_user_id,
+                limit=limit,
+            )
+        else:
+            if not config.insforge_current_user_id:
+                raise typer.BadParameter("No current user is set. Run `tracker auth login` first.")
+            records = repository.search_workflow_templates_mine(
+                query,
+                user_id=config.insforge_current_user_id,
+                limit=limit,
+            )
     _render_template_table(records)
 
 

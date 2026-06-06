@@ -18,6 +18,12 @@ class SyncService:
         self.client = client
         self.config = config
 
+    def _team_visibility_enabled(self) -> bool:
+        return self.config.workflow_visibility == "team" and self.config.enable_team_sharing
+
+    def _workflow_visibility(self) -> str:
+        return "team" if self._team_visibility_enabled() else "private"
+
     def sync_all(self) -> dict[str, int]:
         synced_sessions = 0
         synced_chunk_summaries = 0
@@ -37,6 +43,7 @@ class SyncService:
                     "session_name": session.session_name,
                     "device_name": session.device_name,
                     "os_name": session.os_name,
+                    "visibility": "private",
                 }
             )
             self.repository.mark_session_synced(session.id, created.get("id"))
@@ -47,6 +54,7 @@ class SyncService:
                 {
                     "id": summary.id,
                     "session_id": summary.session_id,
+                    "user_id": summary.user_id,
                     "chunk_index": summary.chunk_index,
                     "started_at": summary.started_at,
                     "ended_at": summary.ended_at,
@@ -64,6 +72,7 @@ class SyncService:
                     {
                         "id": final.id,
                         "session_id": final.session_id,
+                        "user_id": final.user_id,
                         "pseudocode": final.pseudocode,
                         "plain_text": final.plain_text,
                         "suggestions": final.suggestions,
@@ -82,6 +91,7 @@ class SyncService:
                     {
                         "id": insight.id,
                         "session_id": insight.session_id,
+                        "user_id": insight.user_id,
                         "summary": insight.summary,
                         "main_apps": insight.main_apps,
                         "detected_task_type": insight.detected_task_type,
@@ -103,6 +113,7 @@ class SyncService:
                 created_template = self.client.upload_workflow_template(
                     {
                         "id": template.id,
+                        "user_id": template.user_id,
                         "session_id": template.session_id,
                         "title": template.title,
                         "description": template.description,
@@ -110,6 +121,8 @@ class SyncService:
                         "tags": template.tags,
                         "pseudocode": template.pseudocode,
                         "plain_text": template.plain_text,
+                        "visibility": self._workflow_visibility(),
+                        "shared_with_team": self._workflow_visibility() == "team",
                         "created_from": template.created_from,
                     }
                 )
@@ -125,10 +138,12 @@ class SyncService:
                 created_record = self.client.upload_search_index_record(
                     {
                         "id": record.id,
+                        "user_id": record.user_id,
                         "session_id": record.session_id,
                         "template_id": record.template_id,
                         "searchable_text": record.searchable_text,
                         "tags": record.tags,
+                        "visibility": self._workflow_visibility(),
                     }
                 )
             except requests.HTTPError as exc:
@@ -146,6 +161,7 @@ class SyncService:
                 {
                     "id": draft.id,
                     "session_id": draft.session_id,
+                    "user_id": draft.user_id,
                     "template_id": draft.template_id,
                     "status": draft.status,
                     "proposed_action": draft.proposed_action,
@@ -187,6 +203,7 @@ class SyncService:
                     "session_name": session.session_name,
                     "device_name": session.device_name,
                     "os_name": session.os_name,
+                    "visibility": "private",
                 }
             )
             self.repository.mark_session_synced(session.id, created.get("id"))
@@ -196,6 +213,7 @@ class SyncService:
                 {
                     "id": summary.id,
                     "session_id": summary.session_id,
+                    "user_id": summary.user_id,
                     "chunk_index": summary.chunk_index,
                     "started_at": summary.started_at,
                     "ended_at": summary.ended_at,
@@ -213,6 +231,7 @@ class SyncService:
                     {
                         "id": final.id,
                         "session_id": final.session_id,
+                        "user_id": final.user_id,
                         "pseudocode": final.pseudocode,
                         "plain_text": final.plain_text,
                         "suggestions": final.suggestions,
@@ -231,6 +250,7 @@ class SyncService:
                     {
                         "id": insight.id,
                         "session_id": insight.session_id,
+                        "user_id": insight.user_id,
                         "summary": insight.summary,
                         "main_apps": insight.main_apps,
                         "detected_task_type": insight.detected_task_type,
@@ -252,6 +272,7 @@ class SyncService:
                 created_template = self.client.upload_workflow_template(
                     {
                         "id": template.id,
+                        "user_id": template.user_id,
                         "session_id": template.session_id,
                         "title": template.title,
                         "description": template.description,
@@ -259,6 +280,8 @@ class SyncService:
                         "tags": template.tags,
                         "pseudocode": template.pseudocode,
                         "plain_text": template.plain_text,
+                        "visibility": self._workflow_visibility(),
+                        "shared_with_team": self._workflow_visibility() == "team",
                         "created_from": template.created_from,
                     }
                 )
@@ -274,10 +297,12 @@ class SyncService:
                 created_record = self.client.upload_search_index_record(
                     {
                         "id": record.id,
+                        "user_id": record.user_id,
                         "session_id": record.session_id,
                         "template_id": record.template_id,
                         "searchable_text": record.searchable_text,
                         "tags": record.tags,
+                        "visibility": self._workflow_visibility(),
                     }
                 )
             except requests.HTTPError as exc:
@@ -295,6 +320,7 @@ class SyncService:
                 {
                     "id": draft.id,
                     "session_id": draft.session_id,
+                    "user_id": draft.user_id,
                     "template_id": draft.template_id,
                     "status": draft.status,
                     "proposed_action": draft.proposed_action,

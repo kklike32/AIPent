@@ -50,6 +50,14 @@ export function FinalWorkflowPanel({ workflow }: Props) {
               <div className="mt-2 font-medium text-foreground">
                 {workflow.templateTitle ?? "Not created yet"}
               </div>
+              <div className="mt-2 text-xs text-muted-foreground">
+                Visibility: {workflow.templateVisibility ?? "private"}
+              </div>
+              {workflow.templateOwnerId ? (
+                <div className="mt-1 text-xs text-muted-foreground">
+                  Created by: {workflow.templateOwnerId}
+                </div>
+              ) : null}
             </CardSurface>
             <CardSurface className="rounded-[1.35rem] px-4 py-4 text-sm text-accent-foreground" tone="base">
               <SectionEyebrow className="tracking-[0.24em]">Agent handoff</SectionEyebrow>

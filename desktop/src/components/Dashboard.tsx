@@ -11,6 +11,7 @@ type Props = {
   isBusy: boolean;
   sessionId: string | null;
   syncLabel: string;
+  authStatusLabel: string;
   metrics: {
     screenshots: number;
     events: number;
@@ -28,6 +29,7 @@ export function Dashboard({
   isBusy,
   sessionId,
   syncLabel,
+  authStatusLabel,
   metrics,
   errorMessage,
   onStart,
@@ -55,6 +57,7 @@ export function Dashboard({
                 Start and stop the Python recorder, pause when needed, and keep raw screenshots and
                 input data on-device.
               </p>
+              <p className="mt-2 text-sm font-medium text-foreground">Auth: {authStatusLabel}</p>
             </div>
 
             <button

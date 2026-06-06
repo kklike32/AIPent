@@ -35,15 +35,14 @@ export function PipelineProgress({ steps, metrics }: Props) {
           >
             <div className="flex flex-col items-center">
               <div
-                className={`mt-1 flex h-10 w-10 items-center justify-center rounded-full text-sm font-semibold ${
-                  step.state === "complete"
+                className={`mt-1 flex h-10 w-10 items-center justify-center rounded-full text-sm font-semibold ${step.state === "complete"
                     ? "bg-primary text-primary-foreground"
                     : step.state === "active"
                       ? "bg-secondary text-secondary-foreground"
                       : step.state === "error"
                         ? "bg-destructive text-white"
                         : "bg-muted text-muted-foreground"
-                }`}
+                  }`}
               >
                 {index + 1}
               </div>

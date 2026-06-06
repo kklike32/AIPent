@@ -30,6 +30,7 @@ def _uuid() -> str:
 class Session(BaseModel):
     id: str = Field(default_factory=_uuid)
     user_id: str | None = None
+    visibility: str = "private"
     started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     ended_at: datetime | None = None
     session_name: str | None = None
@@ -89,6 +90,7 @@ class ChunkSummary:
     summary: str
     observed_apps: list[str]
     confidence: str
+    user_id: str | None = None
     id: str = field(default_factory=_uuid)
     synced: bool = False
     cloud_id: str | None = None
@@ -101,6 +103,7 @@ class FinalPseudocode:
     pseudocode: list[str]
     plain_text: str
     suggestions: list[str]
+    user_id: str | None = None
     id: str = field(default_factory=_uuid)
     synced: bool = False
     cloud_id: str | None = None
@@ -117,6 +120,7 @@ class WorkflowInsight:
     automation_score: int
     automation_reason: str
     recommended_next_action: str
+    user_id: str | None = None
     id: str = field(default_factory=_uuid)
     synced: bool = False
     cloud_id: str | None = None
@@ -132,6 +136,9 @@ class WorkflowTemplate:
     tags: list[str]
     pseudocode: list[str]
     plain_text: str
+    user_id: str | None = None
+    visibility: str = "private"
+    shared_with_team: bool = False
     created_from: str = "session_summary"
     id: str = field(default_factory=_uuid)
     synced: bool = False
@@ -147,6 +154,7 @@ class AgentHandoffDraft:
     proposed_action: str
     action_plan: list[str]
     requires_user_approval: bool = True
+    user_id: str | None = None
     id: str = field(default_factory=_uuid)
     synced: bool = False
     cloud_id: str | None = None
@@ -161,6 +169,8 @@ class WorkflowSearchIndexRecord:
     template_id: str | None
     searchable_text: str
     tags: list[str]
+    user_id: str | None = None
+    visibility: str = "private"
     id: str = field(default_factory=_uuid)
     synced: bool = False
     cloud_id: str | None = None

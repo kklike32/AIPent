@@ -34,7 +34,12 @@ class TrackerConfig:
     insforge_base_url: str | None = None
     insforge_project_id: str | None = None
     insforge_api_key: str | None = None
+    insforge_auth_enabled: bool = True
     insforge_auth_token: str | None = None
+    insforge_current_user_id: str | None = None
+    default_workflow_visibility: str = "private"
+    workflow_visibility: str = "private"
+    enable_team_sharing: bool = True
     insforge_storage_bucket: str = "session-screenshots"
     insforge_summaries_table: str = "chunk_summaries"
     insforge_final_table: str = "final_pseudocode"
@@ -78,7 +83,12 @@ class TrackerConfig:
             insforge_base_url=os.getenv("INSFORGE_BASE_URL"),
             insforge_project_id=os.getenv("INSFORGE_PROJECT_ID"),
             insforge_api_key=os.getenv("INSFORGE_API_KEY"),
+            insforge_auth_enabled=as_bool(os.getenv("INSFORGE_AUTH_ENABLED"), True),
             insforge_auth_token=os.getenv("INSFORGE_AUTH_TOKEN"),
+            insforge_current_user_id=os.getenv("INSFORGE_CURRENT_USER_ID"),
+            default_workflow_visibility=os.getenv("DEFAULT_WORKFLOW_VISIBILITY", "private"),
+            workflow_visibility=os.getenv("DEFAULT_WORKFLOW_VISIBILITY", "private"),
+            enable_team_sharing=as_bool(os.getenv("ENABLE_TEAM_SHARING"), True),
             insforge_storage_bucket=os.getenv(
                 "INSFORGE_STORAGE_BUCKET",
                 "session-screenshots",

@@ -136,3 +136,21 @@ def test_low_automation_score_does_not_create_handoff_draft() -> None:
 
     assert artifacts.insight.automation_score < 75
     assert artifacts.handoff_draft is None
+
+
+def test_workflow_template_defaults_to_private_visibility() -> None:
+    insight = WorkflowInsightGenerator().generate(_sample_final(), _sample_summaries())
+    template = WorkflowTemplateGenerator().generate(_sample_final(), insight)
+
+    assert template.visibility == "private"
+    assert template.shared_with_team is False
+
+
+def test_workflow_template_team_visibility_is_opt_in() -> None:
+    insight = WorkflowInsightGenerator().generate(_sample_final(), _sample_summaries())
+    template = WorkflowTemplateGenerator().generate(_sample_final(), insight)
+    template.visibility = "team"
+    template.shared_with_team = template.visibility == "team"
+
+    assert template.visibility == "team"
+    assert template.shared_with_team is True
