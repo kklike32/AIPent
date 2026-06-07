@@ -105,6 +105,7 @@ def test_recorder_generates_local_raw_data_and_remote_summaries_only(tmp_path) -
     recorder._chunker.add_event(ocr_event)
 
     recorder._process_due_chunk(now + timedelta(seconds=6))
+    recorder._wait_for_pending_summaries()
     summaries = repository.get_chunk_summaries(session.id)
     recorder._upload_chunk_summary(summaries[0])
     final = repository.save_final_pseudocode(
@@ -187,6 +188,7 @@ def test_recorder_purges_expired_raw_data_after_summary(tmp_path) -> None:
     recorder._chunker.mark_screenshot_captured(screenshot, now)
 
     recorder._process_due_chunk(now + timedelta(seconds=6))
+    recorder._wait_for_pending_summaries()
 
     assert repository.get_chunk_summaries(session.id)
     assert old_screenshot_path.exists() is False
@@ -239,6 +241,7 @@ def test_recorder_emits_chunk_and_sync_events(tmp_path) -> None:
     recorder._chunker.mark_screenshot_captured(screenshot, now)
 
     recorder._process_due_chunk(now + timedelta(seconds=6))
+    recorder._wait_for_pending_summaries()
 
     event_types = [event["type"] for event in emitted]
     assert event_types == [
@@ -266,8 +269,9 @@ def test_recorder_pause_resume_and_shutdown_emit_ui_events(tmp_path, monkeypatch
 
     monkeypatch.setattr("tracker.recorder.get_active_app_context", lambda: ("Chrome", "Docs"))
     monkeypatch.setattr(
-        "tracker.recorder.generate_final_pseudocode",
-        lambda _llm, _summaries: FinalPseudocode(
+        recorder.llm_client,
+        "generate_final_pseudocode_with_audio",
+        lambda _summaries, _audio_path: FinalPseudocode(
             session_id="session-ui",
             pseudocode=["Step 1. Open Docs."],
             plain_text="1. Open Docs.",

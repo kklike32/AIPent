@@ -138,6 +138,8 @@ def test_local_sqlite_purges_expired_raw_data(tmp_path: Path) -> None:
     old_time = datetime.now(timezone.utc) - timedelta(minutes=10)
     screenshot_path = tmp_path / "old_frame.png"
     screenshot_path.write_bytes(b"png")
+    audio_path = tmp_path / "old_audio.wav"
+    audio_path.write_bytes(b"wav")
 
     repository.save_event(
         Event(
@@ -155,6 +157,14 @@ def test_local_sqlite_purges_expired_raw_data(tmp_path: Path) -> None:
             metadata={},
         )
     )
+    repository.save_event(
+        Event(
+            session_id=session.id,
+            event_type=EventType.AUDIO_RECORDING,
+            timestamp=old_time,
+            metadata={"path": str(audio_path), "status": "stopped"},
+        )
+    )
     repository.save_screenshot(
         ScreenshotRecord(
             session_id=session.id,
@@ -169,9 +179,10 @@ def test_local_sqlite_purges_expired_raw_data(tmp_path: Path) -> None:
     )
 
     assert result["screenshots_deleted"] == 1
-    assert result["event_rows_deleted"] == 1
-    assert result["screenshot_files_deleted"] == 1
+    assert result["event_rows_deleted"] == 2
+    assert result["screenshot_files_deleted"] == 2
     assert screenshot_path.exists() is False
+    assert audio_path.exists() is False
     remaining_events = repository.get_events(session.id)
     assert len(remaining_events) == 1
     assert remaining_events[0].event_type == EventType.SESSION_START

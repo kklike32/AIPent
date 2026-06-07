@@ -28,6 +28,7 @@ class LocalSQLiteRepository(TrackerRepository):
         EventType.ACTIVE_WINDOW.value,
         EventType.SCREENSHOT.value,
         EventType.OCR_TEXT.value,
+        EventType.AUDIO_RECORDING.value,
     )
 
     def __init__(self, db_path: Path):
@@ -935,6 +936,13 @@ class LocalSQLiteRepository(TrackerRepository):
             for record in self.get_screenshots(session_id)
             if record.captured_at <= cutoff
         ]
+        audio_paths = [
+            Path(event.metadata["path"])
+            for event in self.get_events(session_id)
+            if event.event_type == EventType.AUDIO_RECORDING
+            and event.timestamp <= cutoff
+            and event.metadata.get("path")
+        ]
 
         with self._connect() as conn:
             screenshots_deleted = conn.execute(
@@ -957,7 +965,7 @@ class LocalSQLiteRepository(TrackerRepository):
             ).rowcount
 
         files_deleted = 0
-        for path in screenshot_paths:
+        for path in [*screenshot_paths, *audio_paths]:
             try:
                 if path.exists():
                     path.unlink()

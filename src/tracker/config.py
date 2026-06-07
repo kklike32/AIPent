@@ -6,13 +6,25 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+DEFAULT_VERTEX_MODEL = "gemini-3.5-flash"
+MODEL_ALIASES = {
+    "gemini-3.1-flash-light": DEFAULT_VERTEX_MODEL,
+    "gemini-3.1-flash-lite": DEFAULT_VERTEX_MODEL,
+}
+
+
+def normalize_llm_model(model: str) -> str:
+    return MODEL_ALIASES.get(model.strip().lower(), model.strip())
+
 
 @dataclass(slots=True)
 class TrackerConfig:
     db_path: Path = Path("data/local_tracker.db")
     screenshot_dir: Path = Path("data/screenshots")
+    audio_dir: Path = Path("data/audio")
     export_dir: Path = Path("data/exports")
-    screenshot_interval_seconds: int = 2
+    control_dir: Path | None = None
+    screenshot_interval_seconds: int = 1
     chunk_interval_seconds: int = 6
     raw_data_ttl_seconds: int = 300
     ocr_enabled: bool = True
@@ -23,8 +35,12 @@ class TrackerConfig:
     upload_screenshots: bool = False
     upload_ocr_text: bool = False
     upload_only_summaries: bool = True
+    enable_audio_capture: bool = False
+    audio_input_device: str = ":0"
+    audio_sample_rate: int = 16000
+    ffmpeg_path: str = "ffmpeg"
     llm_provider: str = "vertex_gemini"
-    llm_model: str = "gemini-1.5-pro"
+    llm_model: str = DEFAULT_VERTEX_MODEL
     vertex_api_key: str | None = None
     google_api_key: str | None = None
     gemini_api_key: str | None = None
@@ -63,7 +79,13 @@ class TrackerConfig:
 
         return cls(
             db_path=Path(os.getenv("LOCAL_DB_PATH", "data/local_tracker.db")),
-            screenshot_interval_seconds=int(os.getenv("SCREENSHOT_INTERVAL_SECONDS", "2")),
+            audio_dir=Path(os.getenv("AUDIO_DIR", "data/audio")),
+            control_dir=(
+                Path(os.environ["TRACKER_CONTROL_DIR"])
+                if os.getenv("TRACKER_CONTROL_DIR")
+                else None
+            ),
+            screenshot_interval_seconds=int(os.getenv("SCREENSHOT_INTERVAL_SECONDS", "1")),
             chunk_interval_seconds=int(os.getenv("CHUNK_INTERVAL_SECONDS", "6")),
             raw_data_ttl_seconds=int(os.getenv("RAW_DATA_TTL_SECONDS", "300")),
             enable_cloud_sync=as_bool(os.getenv("ENABLE_CLOUD_SYNC"), False),
@@ -72,8 +94,12 @@ class TrackerConfig:
             upload_screenshots=as_bool(os.getenv("UPLOAD_SCREENSHOTS"), False),
             upload_ocr_text=as_bool(os.getenv("UPLOAD_OCR_TEXT"), False),
             upload_only_summaries=as_bool(os.getenv("UPLOAD_ONLY_SUMMARIES"), True),
+            enable_audio_capture=as_bool(os.getenv("ENABLE_AUDIO_CAPTURE"), False),
+            audio_input_device=os.getenv("AUDIO_INPUT_DEVICE", ":0"),
+            audio_sample_rate=int(os.getenv("AUDIO_SAMPLE_RATE", "16000")),
+            ffmpeg_path=os.getenv("FFMPEG_PATH", "ffmpeg"),
             llm_provider=os.getenv("LLM_PROVIDER", "vertex_gemini"),
-            llm_model=os.getenv("LLM_MODEL", "gemini-1.5-pro"),
+            llm_model=normalize_llm_model(os.getenv("LLM_MODEL", DEFAULT_VERTEX_MODEL)),
             vertex_api_key=os.getenv("VERTEX_API_KEY"),
             google_api_key=os.getenv("GOOGLE_API_KEY"),
             gemini_api_key=os.getenv("GEMINI_API_KEY"),
@@ -131,4 +157,7 @@ class TrackerConfig:
     def ensure_directories(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.screenshot_dir.mkdir(parents=True, exist_ok=True)
+        self.audio_dir.mkdir(parents=True, exist_ok=True)
         self.export_dir.mkdir(parents=True, exist_ok=True)
+        if self.control_dir is not None:
+            self.control_dir.mkdir(parents=True, exist_ok=True)

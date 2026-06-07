@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import platform
+import signal
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 import requests
 
 from .app_context import get_active_app_context
+from .audio import AudioRecorder
 from .chunker import ActivityChunker
 from .config import TrackerConfig
 from .events import ChunkSummary, Event, EventType, FinalPseudocode, ScreenshotRecord, Session
@@ -24,7 +28,7 @@ from .privacy import (
 from .screenshot import capture_screenshot
 from .storage.insforge_client import InsForgeClient
 from .storage.local_sqlite import LocalSQLiteRepository
-from .summarization import generate_final_pseudocode, summarize_activity_chunk
+from .summarization import summarize_activity_chunk
 from .workflows import build_workflow_artifacts
 
 
@@ -51,15 +55,24 @@ class SessionRecorder:
         self.repository = repository
         self.llm_client = llm_client
         self.insforge_client = insforge_client
+        self.audio_recorder = AudioRecorder(config)
         self.ocr = OCRProcessor(enabled=config.ocr_enabled)
         self.state = RecorderState()
         self._keyboard_listener = None
         self._mouse_listener = None
         self._chunker: ActivityChunker | None = None
         self._event_sink = event_sink
+        self._stop_reason = "user_interrupt_or_stop"
+        self._stop_signal_path = self._resolve_stop_signal_path()
+        self._summary_executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="tracker-summary",
+        )
+        self._pending_summary_futures: list[Future[ChunkSummary]] = []
 
     def run(self) -> str:
         self.config.ensure_directories()
+        self._clear_stop_signal()
         session = Session(
             user_id=self.config.insforge_current_user_id,
             visibility="private",
@@ -75,6 +88,7 @@ class SessionRecorder:
             session_id=session.id,
             started_at=session.started_at.isoformat(),
         )
+        self._start_audio_capture(session.id)
         self._chunker = ActivityChunker(
             session_id=session.id,
             screenshot_interval_seconds=self.config.screenshot_interval_seconds,
@@ -94,6 +108,7 @@ class SessionRecorder:
                 metadata={
                     "local_only_mode": self.config.local_only_mode,
                     "ocr_enabled": self.config.ocr_enabled,
+                    "audio_enabled": self.config.enable_audio_capture,
                     "enable_cloud_sync": self.config.enable_cloud_sync,
                 },
             )
@@ -101,23 +116,38 @@ class SessionRecorder:
         self._chunker.add_event(start_event)
         self._start_input_listeners()
 
+        previous_sigint = signal.getsignal(signal.SIGINT)
+        previous_sigterm = signal.getsignal(signal.SIGTERM)
+
+        def _handle_signal(signum, _frame) -> None:
+            self.state.running = False
+            self._stop_reason = "sigterm" if signum == signal.SIGTERM else "sigint"
+
+        signal.signal(signal.SIGINT, _handle_signal)
+        signal.signal(signal.SIGTERM, _handle_signal)
+
         try:
             while self.state.running:
                 if self.state.paused:
+                    self._check_stop_signal()
                     time.sleep(0.1)
                     continue
 
                 current = datetime.now(timezone.utc)
+                self._check_stop_signal()
                 if self._chunker.should_capture_screenshot(current):
                     self._record_snapshot(current)
                 self._process_due_chunk(current)
                 time.sleep(0.05)
         except KeyboardInterrupt:
             self.state.running = False
+            self._stop_reason = "keyboard_interrupt"
         except Exception as exc:
             self._emit("error", message=str(exc), recoverable=False)
             raise
         finally:
+            signal.signal(signal.SIGINT, previous_sigint)
+            signal.signal(signal.SIGTERM, previous_sigterm)
             self._shutdown()
 
         return str(session.id)
@@ -169,18 +199,20 @@ class SessionRecorder:
                 event_type=EventType.SESSION_STOP,
                 app_name=app_name,
                 window_title=window_title,
-                metadata={"reason": "user_interrupt_or_stop"},
+                metadata={"reason": self._stop_reason},
             )
         )
         if self._chunker:
             self._chunker.add_event(stop_event)
+        audio_path = self._stop_audio_capture()
         self._flush_pending_chunk()
+        self._wait_for_pending_summaries()
 
         summaries = self.repository.get_chunk_summaries(self.state.session_id)
         if summaries:
             self._emit("final_pseudocode_started", session_id=self.state.session_id)
             final = self._save_final_pseudocode(
-                generate_final_pseudocode(self.llm_client, summaries)
+                self.llm_client.generate_final_pseudocode_with_audio(summaries, audio_path)
             )
             if self.insforge_client and self.config.enable_cloud_sync:
                 self._upload_final_pseudocode(final)
@@ -222,6 +254,7 @@ class SessionRecorder:
                 session_id=session.id,
                 ended_at=session.ended_at.isoformat() if session.ended_at else None,
             )
+        self._summary_executor.shutdown(wait=True)
 
     def _record_snapshot(self, current: datetime) -> None:
         assert self.state.session_id is not None
@@ -285,6 +318,33 @@ class SessionRecorder:
             self._chunker.add_event(ocr_event)
         self._emit_capture_tick()
 
+    def _start_audio_capture(self, session_id: str) -> None:
+        path = self.audio_recorder.start(session_id)
+        if path is None:
+            return
+        self._save_event(
+            Event(
+                session_id=session_id,
+                event_type=EventType.AUDIO_RECORDING,
+                metadata={"path": str(path), "status": "started"},
+            )
+        )
+
+    def _stop_audio_capture(self) -> Path | None:
+        if self.state.session_id is None:
+            return None
+        path = self.audio_recorder.stop()
+        if path is None:
+            return None
+        self._save_event(
+            Event(
+                session_id=self.state.session_id,
+                event_type=EventType.AUDIO_RECORDING,
+                metadata={"path": str(path), "status": "stopped"},
+            )
+        )
+        return path
+
     def _process_due_chunk(self, current: datetime) -> None:
         assert self._chunker is not None
         chunk = self._chunker.build_chunk(current)
@@ -297,21 +357,8 @@ class SessionRecorder:
             started_at=chunk.started_at,
             ended_at=chunk.ended_at,
         )
-        self._emit("gemini_started", chunk_index=chunk.chunk_index)
-        summary = self._save_chunk_summary(summarize_activity_chunk(self.llm_client, chunk))
-        self._emit(
-            "chunk_summary_created",
-            chunk_index=summary.chunk_index,
-            summary=summary.summary,
-            observed_apps=summary.observed_apps,
-            confidence=summary.confidence,
-            started_at=summary.started_at,
-            ended_at=summary.ended_at,
-        )
-        if self.insforge_client and self.config.enable_cloud_sync:
-            self._upload_chunk_summary(summary)
         self._chunker.reset_chunk_buffer(current)
-        self._purge_expired_raw_data(current)
+        self._submit_chunk_summary(chunk, current)
 
     def _flush_pending_chunk(self) -> None:
         if not self._chunker:
@@ -327,7 +374,16 @@ class SessionRecorder:
             started_at=chunk.started_at,
             ended_at=chunk.ended_at,
         )
+        self._chunker.reset_chunk_buffer(current)
+        self._submit_chunk_summary(chunk, current)
+
+    def _submit_chunk_summary(self, chunk, current: datetime) -> None:
+        self._drain_completed_summary_futures()
         self._emit("gemini_started", chunk_index=chunk.chunk_index)
+        future = self._summary_executor.submit(self._summarize_and_save_chunk, chunk, current)
+        self._pending_summary_futures.append(future)
+
+    def _summarize_and_save_chunk(self, chunk, current: datetime) -> ChunkSummary:
         summary = self._save_chunk_summary(summarize_activity_chunk(self.llm_client, chunk))
         self._emit(
             "chunk_summary_created",
@@ -340,8 +396,22 @@ class SessionRecorder:
         )
         if self.insforge_client and self.config.enable_cloud_sync:
             self._upload_chunk_summary(summary)
-        self._chunker.reset_chunk_buffer(current)
         self._purge_expired_raw_data(current)
+        return summary
+
+    def _drain_completed_summary_futures(self) -> None:
+        pending = []
+        for future in self._pending_summary_futures:
+            if future.done():
+                future.result()
+            else:
+                pending.append(future)
+        self._pending_summary_futures = pending
+
+    def _wait_for_pending_summaries(self) -> None:
+        for future in self._pending_summary_futures:
+            future.result()
+        self._pending_summary_futures.clear()
 
     def _save_chunk_summary(self, summary: ChunkSummary) -> ChunkSummary:
         summary.user_id = self.config.insforge_current_user_id
@@ -608,6 +678,22 @@ class SessionRecorder:
         cutoff = current - timedelta(seconds=self.config.raw_data_ttl_seconds)
         self.repository.purge_expired_raw_data(self.state.session_id, cutoff)
 
+    def _resolve_stop_signal_path(self) -> Path | None:
+        if self.config.control_dir is None:
+            return None
+        return self.config.control_dir / "stop"
+
+    def _clear_stop_signal(self) -> None:
+        if self._stop_signal_path and self._stop_signal_path.exists():
+            self._stop_signal_path.unlink()
+
+    def _check_stop_signal(self) -> None:
+        if not self._stop_signal_path or not self._stop_signal_path.exists():
+            return
+        self._stop_reason = "buddybar_stop_request"
+        self.state.running = False
+        self._stop_signal_path.unlink()
+
     def _normalize_key_name(self, key: object) -> str | None:
         key_str = str(key).replace("Key.", "").lower()
         if key_str.startswith("'") and key_str.endswith("'"):
@@ -731,6 +817,7 @@ class SessionRecorder:
             self._chunker.add_event(event)
 
     def request_stop(self) -> None:
+        self._stop_reason = "programmatic_stop"
         self.state.running = False
 
     def pause(self) -> None:

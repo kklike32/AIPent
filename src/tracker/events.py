@@ -19,6 +19,7 @@ class EventType(str, Enum):
     ACTIVE_WINDOW = "active_window"
     SCREENSHOT = "screenshot"
     OCR_TEXT = "ocr_text"
+    AUDIO_RECORDING = "audio_recording"
     PSEUDOCODE_GENERATED = "pseudocode_generated"
     SUGGESTION_GENERATED = "suggestion_generated"
 

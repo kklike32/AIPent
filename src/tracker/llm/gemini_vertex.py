@@ -51,13 +51,22 @@ Return JSON:
 
 FINAL_PSEUDOCODE_PROMPT = """You are given a sequence of detailed summaries from a recorded computer session.
 
+Optional audio may also be attached. If present, it contains the user's spoken narration,
+instructions, and explanation of what they are doing. Use the audio as intent/context
+when creating the workflow steps, but do not quote private speech verbatim unless needed.
+
 Task:
-Convert the full session into a clean pseudocode-style workflow.
+Convert the full session into a clean, concise workflow that captures the user's real goal.
 
 Rules:
 - Combine repeated low-level actions into meaningful workflow steps.
 - Do not mention screenshots, mouse coordinates, or raw keyboard events.
-- Prefer clear action verbs.
+- Ignore recorder/admin noise such as Screen Buddy controls, Start/Stop clicks, permission prompts, app overlays, sync buttons, capture setup, or saving the recording.
+- Focus on the user's external task and intent, not the mechanics of using this recording app.
+- Prefer short, essential action steps with clear verbs.
+- Keep each step to one sentence unless a tiny clarification is truly needed.
+- Avoid filler, generic commentary, and "AI-sounding" explanations.
+- Produce about 4-8 steps for a normal short session.
 - Preserve chronological order.
 - Include enough detail that a user could understand or recreate the workflow.
 - If the workflow appears automatable, include suggestions.
@@ -65,10 +74,10 @@ Rules:
 Return JSON:
 {
   "pseudocode": [
-    "Step 1...",
-    "Step 2..."
+    "Step 1. Essential action.",
+    "Step 2. Essential action."
   ],
-  "plain_text": "1. ...\\n2. ...",
+  "plain_text": "1. Essential action.\\n2. Essential action.",
   "suggestions": [
     "..."
   ]
@@ -172,8 +181,61 @@ class VertexGeminiClient(LLMClient):
             suggestions=[str(item) for item in payload.get("suggestions", [])],
         )
 
+    def generate_final_pseudocode_with_audio(
+        self,
+        summaries: list[ChunkSummary],
+        audio_path: Path | None,
+    ) -> FinalPseudocode:
+        if audio_path is None or not audio_path.exists() or audio_path.stat().st_size == 0:
+            return self.generate_final_pseudocode(summaries)
+        if not summaries:
+            raise ValueError("At least one chunk summary is required.")
+
+        ordered = sorted(summaries, key=lambda summary: summary.chunk_index)
+        summary_payload = [
+            {
+                "chunk_index": summary.chunk_index,
+                "started_at": summary.started_at,
+                "ended_at": summary.ended_at,
+                "summary": summary.summary,
+                "observed_apps": summary.observed_apps,
+                "confidence": summary.confidence,
+            }
+            for summary in ordered
+        ]
+        try:
+            if self._mode == "api_key":
+                payload = self._generate_content_api_key(
+                    FINAL_PSEUDOCODE_PROMPT,
+                    summary_payload,
+                    [audio_path],
+                )
+            else:
+                parts = [
+                    FINAL_PSEUDOCODE_PROMPT,
+                    json.dumps(summary_payload, indent=2),
+                    self._media_part(audio_path),
+                ]
+                payload = self._extract_json(self._model.generate_content(parts))
+        except Exception:
+            return self.generate_final_pseudocode(summaries)
+        return FinalPseudocode(
+            session_id=ordered[0].session_id,
+            pseudocode=[str(item) for item in payload["pseudocode"]],
+            plain_text=str(payload["plain_text"]),
+            suggestions=[str(item) for item in payload.get("suggestions", [])],
+        )
+
     def _image_part(self, path: Path):
         return self._part_cls.from_image(self._image_cls.load_from_file(str(path)))
+
+    def _media_part(self, path: Path):
+        if path.suffix.lower() in {".png", ".jpg", ".jpeg"}:
+            return self._image_part(path)
+        return self._part_cls.from_data(
+            data=path.read_bytes(),
+            mime_type=self._detect_mime_type(path),
+        )
 
     def _build_chunk_context(self, chunk: ActivityChunk) -> dict[str, object]:
         recent_windows = self._dedupe_preserve_order(
@@ -290,6 +352,10 @@ class VertexGeminiClient(LLMClient):
             return "image/png"
         if suffix in {".jpg", ".jpeg"}:
             return "image/jpeg"
+        if suffix == ".wav":
+            return "audio/wav"
+        if suffix == ".m4a":
+            return "audio/mp4"
         return "application/octet-stream"
 
     def _extract_json(self, response: object) -> dict:
