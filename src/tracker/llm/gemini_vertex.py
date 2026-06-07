@@ -22,12 +22,20 @@ Inputs may include:
 - OCR text extracted locally
 
 Task:
-Write a detailed but concise summary of what the user appears to be doing.
+Write a concrete, descriptive summary of what the user appears to be doing in this window.
 
 Rules:
+- Write 2-4 sentences in plain English.
+- Describe the visible workflow in chronological order.
+- Name the application, website, document, tab, panel, dialog, button, menu, field, link, or item being interacted with when you can infer it from the screenshots, window titles, OCR text, or event sequence.
+- Explicitly mention notable user actions such as opening, switching, selecting, clicking, typing, pasting, submitting, dragging, scrolling, confirming, or exporting when supported by the evidence.
+- Mention what likely changed on screen after the action when visible, such as a modal opening, a form updating, a selection changing, a page loading, or a result appearing.
+- If there are clicks or shortcuts but the exact target is unclear, say what the user likely clicked or invoked and why it is uncertain.
+- Prefer specific action verbs over generic phrasing like "worked on" or "interacted with".
 - Do not include raw mouse coordinates.
 - Do not include raw keyboard logs.
 - Do not include sensitive text unless it is essential and clearly visible.
+- Do not mention screenshots, OCR, or "the image shows".
 - Prefer describing intent and workflow.
 - Mention the application or website when clear.
 - Mention uncertainty when the action is ambiguous.
@@ -104,16 +112,7 @@ class VertexGeminiClient(LLMClient):
             self._part_cls = Part
 
     def summarize_chunk(self, chunk: ActivityChunk) -> ChunkSummary:
-        structured_context = {
-            "session_id": chunk.session_id,
-            "chunk_index": chunk.chunk_index,
-            "started_at": chunk.started_at,
-            "ended_at": chunk.ended_at,
-            "mouse_events": chunk.mouse_events,
-            "keyboard_shortcuts": chunk.keyboard_shortcuts,
-            "active_windows": chunk.active_windows,
-            "ocr_text": chunk.ocr_text,
-        }
+        structured_context = self._build_chunk_context(chunk)
         if self._mode == "api_key":
             payload = self._generate_content_api_key(
                 CHUNK_SUMMARY_PROMPT,
@@ -176,6 +175,48 @@ class VertexGeminiClient(LLMClient):
     def _image_part(self, path: Path):
         return self._part_cls.from_image(self._image_cls.load_from_file(str(path)))
 
+    def _build_chunk_context(self, chunk: ActivityChunk) -> dict[str, object]:
+        recent_windows = self._dedupe_preserve_order(
+            [
+                {
+                    "app_name": item.get("app_name"),
+                    "window_title": item.get("window_title"),
+                }
+                for item in chunk.active_windows
+                if item.get("app_name") or item.get("window_title")
+            ]
+        )
+        shortcuts = [
+            str(event.get("shortcut"))
+            for event in chunk.keyboard_shortcuts
+            if event.get("shortcut")
+        ]
+        click_buttons = [
+            str(event.get("button"))
+            for event in chunk.mouse_events
+            if event.get("button")
+        ]
+        ocr_snippets = [text.strip() for text in chunk.ocr_text if text.strip()]
+        return {
+            "session_id": chunk.session_id,
+            "chunk_index": chunk.chunk_index,
+            "started_at": chunk.started_at,
+            "ended_at": chunk.ended_at,
+            "interaction_hints": {
+                "screenshot_count": len(chunk.screenshots),
+                "mouse_click_count": len(chunk.mouse_events),
+                "mouse_buttons": click_buttons,
+                "keyboard_shortcut_count": len(shortcuts),
+                "keyboard_shortcuts": shortcuts,
+                "window_sequence": recent_windows,
+                "ocr_snippets": ocr_snippets[:5],
+            },
+            "mouse_events": chunk.mouse_events,
+            "keyboard_shortcuts": chunk.keyboard_shortcuts,
+            "active_windows": chunk.active_windows,
+            "ocr_text": chunk.ocr_text,
+        }
+
     def _generate_content_api_key(
         self,
         prompt: str,
@@ -231,6 +272,17 @@ class VertexGeminiClient(LLMClient):
         if not isinstance(parsed, dict):
             raise ValueError("Gemini API key response must be a JSON object.")
         return parsed
+
+    def _dedupe_preserve_order(self, entries: list[dict[str, object]]) -> list[dict[str, object]]:
+        seen: set[str] = set()
+        deduped: list[dict[str, object]] = []
+        for entry in entries:
+            marker = json.dumps(entry, sort_keys=True, default=str)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            deduped.append(entry)
+        return deduped
 
     def _detect_mime_type(self, path: Path) -> str:
         suffix = path.suffix.lower()
