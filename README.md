@@ -1,327 +1,225 @@
-### For cloud backend and insforge insane usage visit: https://github.com/Alcray/replaceyourhuman-back
+# AIPent
 
+**AIPent is a native macOS menubar app for turning real desktop work into reusable workflow knowledge.**
 
-# Replace Your Human with AI Skill
+It lives in the menu bar, starts recording in one click, keeps raw activity local, and produces a clean workflow preview you can review before syncing approved summaries to [InsForge](https://insforge.dev).
 
-`computer-usage-tracker` is a local-first Python desktop prototype that captures computer activity, summarizes short activity windows with an LLM, and produces a final pseudocode workflow for the full session.
+![Platform](https://img.shields.io/badge/platform-macOS-black)
+![Backend](https://img.shields.io/badge/backend-InsForge-0f766e)
+![Privacy](https://img.shields.io/badge/mode-local--first-1d4ed8)
 
-InsForge is the privacy-safe workflow intelligence backend. The desktop app keeps raw activity local, while InsForge stores the useful, safe, structured workflow knowledge: summaries, pseudocode, templates, tags, automation scores, and agent handoff plans.
+## Why AIPent Feels Different
 
-## Architecture
+Most activity trackers behave like developer tools. AIPent is designed more like a product:
 
-Core flow:
+- **Native macOS menubar experience.** Start and stop capture without living in a terminal.
+- **Review before sync.** BuddyBar shows a generated steps preview before anything is sent to the cloud.
+- **Local-first by default.** Screenshots, OCR text, keyboard events, and mouse activity stay on your machine.
+- **Structured output, not raw surveillance.** The end result is workflow summaries, pseudocode, reusable templates, and automation hints.
+- **Built for real knowledge capture.** The goal is not analytics dashboards. The goal is to preserve how work actually gets done.
 
-- local screenshots every 2 seconds
-- local mouse, keyboard, app/window, and OCR capture
-- 6-second chunk builder
-- LLM chunk summarization
-- local summary persistence
-- final session pseudocode generation
-- workflow insight generation
-- reusable workflow template generation
-- privacy-safe workflow search indexing
-- automation-readiness scoring
-- draft agent handoff planning
-- privacy-safe InsForge sync for structured workflow records only
+## The Main Product: BuddyBar
 
-Relevant modules:
+`BuddyBar` is the primary experience in this repo: a lightweight native macOS menubar app located in [`macos/BuddyBar`](/Users/keenan/Documents/AIPent/macos/BuddyBar).
 
-- `tracker.recorder`: session lifecycle, capture loop, chunk summarization, finalization
-- `tracker.chunker`: in-memory 6-second chunk assembly
-- `tracker.llm`: provider abstraction, mock provider, Vertex Gemini provider
-- `tracker.summarization`: prompt-safe orchestration helpers
-- `tracker.workflows`: deterministic workflow insight, scoring, template, search, and handoff logic
-- `tracker.storage.local_sqlite`: local persistence for raw data and workflow outputs
-- `tracker.storage.insforge_client`: InsForge API wrapper for privacy-safe workflow records
-- `tracker.sync`: workflow intelligence sync service
+From the menu bar, BuddyBar lets you:
 
-## Privacy-First Backend Design
+- start a capture session
+- stop and save the session
+- see live session state and the latest log line
+- preview generated workflow steps after capture ends
+- sync the approved session summary to InsForge
+- open the local data folder and exports folder
+- reveal the project root quickly
 
-- Raw data stays local in SQLite and the local screenshot directory.
-- Raw screenshots, OCR text, mouse clicks, keyboard logs, and app/window activity are purged locally after the retention window. Default: 300 seconds after capture.
-- Screenshots are used only transiently for local chunk summarization.
-- Gemini / Vertex may receive screenshots and local context for model analysis.
-- InsForge receives only session metadata, detailed chunk summaries, final pseudocode, workflow tags, workflow templates, automation scores, suggested next actions, and draft agent handoff plans.
-- InsForge never receives screenshots, raw mouse coordinates, raw keyboard events, full OCR text, local event logs, or raw app/window streams.
-- Users can disable cloud sync with `ENABLE_CLOUD_SYNC=false` or `tracker start --no-cloud-sync`.
-- Users can switch away from Vertex/Gemini by implementing the `LLMClient` interface and selecting another provider.
+The current implementation uses the Python tracking engine underneath, but the day-to-day experience is intentionally macOS-first.
 
-## Why InsForge Matters
+## How It Works
 
-InsForge is not just used as a database. It is the backend that turns private desktop activity into reusable organizational workflow knowledge.
+1. You start a session from BuddyBar.
+2. The local tracker records screenshots, app/window context, and event metadata on-device.
+3. The recorder groups activity into short chunks and generates workflow summaries.
+4. When the session stops, AIPent creates a final pseudocode-style workflow preview.
+5. You review the result in BuddyBar.
+6. If you want cloud memory and search, you sync the approved privacy-safe summary to InsForge.
 
-The local app captures sensitive raw activity, but only safe summaries and pseudocode are synced to InsForge. This allows teams to build a searchable workflow library without uploading screenshots, keystrokes, or raw user activity.
+## Privacy Model
 
-With InsForge, the app can:
-- remember previous workflows
-- search completed sessions
-- create reusable workflow templates
-- score which workflows are good candidates for automation
-- share safe workflow documentation across a team
-- prepare approved workflows for future agent execution
+What stays local:
 
-## InsForge Auth and Skill Ownership
+- screenshots
+- raw OCR text
+- keyboard and mouse activity
+- local event logs
+- the SQLite capture database
 
-The project reuses the existing InsForge authentication setup from the shared frontend application.
-
-Every synced workflow record is associated with an authenticated InsForge user. This lets the
-system track who created each workflow, who owns each repeatable skill, and which skills are
-private versus shared with the team.
-
-Raw desktop data is never uploaded. Auth only applies to safe backend records:
-
-- chunk summaries
-- final pseudocode
-- workflow insights
-- workflow templates
-- search index records
-- agent handoff drafts
-
-Default visibility is private. Users can explicitly publish a skill template to the team library.
-
-## Sharing Model
-
-Private:
+What can be synced to InsForge:
 
 - session metadata
 - chunk summaries
 - final pseudocode
 - workflow insights
-- agent handoff drafts
-- visible only to creator
+- reusable workflow templates
+- workflow search records
+- draft agent handoff records
 
-Team:
+This is the core product idea: capture sensitive work locally, then sync only the useful structured workflow knowledge.
 
-- workflow template
-- search index record
-- title, description, tags, pseudocode, automation score
-- visible to authenticated users in the project/team
+## InsForge
 
-Never shared:
+[InsForge](https://insforge.dev) is the backend used for privacy-safe workflow memory, search, and sharing.
 
-- screenshots
-- raw OCR
-- raw keyboard events
-- raw mouse events
-- raw local activity logs
+When connected, AIPent can use InsForge to:
 
-## Setup
+- keep approved workflow summaries off-device
+- store reusable workflow templates
+- search previous workflows
+- prepare handoff-ready structured outputs for later automation
 
-### Requirements
+For BuddyBar, sync is explicit. The app records locally first, then offers a deliberate "sync preview" action after the workflow has been generated.
 
-- Python 3.11+
-- Tesseract OCR installed locally
-  - macOS: `brew install tesseract`
+## Quick Start
 
-### Install
+### 1. Set up the Python runtime
 
 ```bash
-python -m pip install -e .[dev]
-python -m pip install -e .[vertex]
+python3.13 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[dev]'
 ```
 
-Install the `vertex` extra only when using `tracker start --llm-provider vertex_gemini`.
+If you want Gemini / Vertex-powered summarization, also install:
 
-### Desktop App
+```bash
+python -m pip install -e '.[vertex]'
+```
 
-Run the Tauri desktop app from the terminal with these steps:
+### 2. Install local dependencies
+
+```bash
+brew install tesseract
+```
+
+### 3. Create your environment file
+
+```bash
+cp .env.example .env
+```
+
+BuddyBar expects the repo root to contain:
+
+- `.venv/bin/python`
+- `.env`
+- `src/tracker`
+
+### 4. Launch the native macOS app
+
+```bash
+cd macos/BuddyBar
+swift run
+```
+
+On first launch, macOS will require **Screen Recording** and **Accessibility** permissions.
+
+## Using BuddyBar
+
+### Local-only workflow
+
+This is the default and recommended way to get started:
+
+1. Launch BuddyBar.
+2. Click **Start** in the menu bar panel.
+3. Do the task you want to capture.
+4. Click **Stop**.
+5. Review the generated steps preview in BuddyBar.
+6. Open the exports or data folder if you want to inspect local artifacts.
+
+### Syncing a reviewed workflow to InsForge
+
+Add these values to `.env`:
+
+```bash
+INSFORGE_BASE_URL=
+INSFORGE_PROJECT_ID=
+INSFORGE_API_KEY=
+INSFORGE_AUTH_TOKEN=
+INSFORGE_CURRENT_USER_ID=
+```
+
+Then, after a session is complete, use the **Sync Preview to InsForge** button in BuddyBar.
+
+If you want to validate the saved auth token from the command line, you can also use:
+
+```bash
+python -m tracker.cli auth status
+```
+
+## Command Line Usage
+
+The menu bar app is the best product surface, but the tracker engine is also available as a CLI.
+
+Start a session:
+
+```bash
+python -m tracker.cli start
+```
+
+Start a session with explicit cloud sync enabled:
+
+```bash
+python -m tracker.cli start --cloud-sync --visibility private
+```
+
+Generate a final workflow summary:
+
+```bash
+python -m tracker.cli summarize
+```
+
+Export a session:
+
+```bash
+python -m tracker.cli export --session-id <session_id>
+```
+
+Sync unsynced records:
+
+```bash
+python -m tracker.cli sync
+```
+
+## Desktop Dashboard
+
+There is also a Tauri-based desktop dashboard in [`desktop`](/Users/keenan/Documents/AIPent/desktop). It provides a larger control panel for recording state, pipeline progress, chunk summaries, privacy settings, and final workflow output.
+
+Run it with:
 
 ```bash
 cd desktop
 npm install
-unset NODE_OPTIONS
 source "$HOME/.cargo/env"
+unset NODE_OPTIONS
 npm run tauri dev
 ```
 
-If you only want the frontend during development, use:
+The dashboard is useful during development, but the repo’s most product-like user experience today is the native BuddyBar menubar app.
 
-```bash
-cd desktop
-npm run dev
-```
+## Project Layout
 
-Stop the desktop app with `Ctrl+C` in the terminal.
+- [`macos/BuddyBar`](/Users/keenan/Documents/AIPent/macos/BuddyBar) - native macOS menubar app
+- [`desktop`](/Users/keenan/Documents/AIPent/desktop) - Tauri desktop dashboard
+- [`src/tracker/cli.py`](/Users/keenan/Documents/AIPent/src/tracker/cli.py) - CLI entrypoint
+- [`src/tracker/recorder.py`](/Users/keenan/Documents/AIPent/src/tracker/recorder.py) - capture loop and session orchestration
+- [`src/tracker/storage/local_sqlite.py`](/Users/keenan/Documents/AIPent/src/tracker/storage/local_sqlite.py) - local persistence
+- [`src/tracker/storage/insforge_client.py`](/Users/keenan/Documents/AIPent/src/tracker/storage/insforge_client.py) - InsForge client
+- [`insforge_schema.sql`](/Users/keenan/Documents/AIPent/insforge_schema.sql) - backend schema reference
 
-### Environment
+## Product Positioning
 
-Copy `.env.example` to `.env`.
+AIPent is best understood as a workflow capture product for macOS:
 
-Key variables:
+- **BuddyBar** makes capture feel lightweight and always available.
+- **The local tracker** turns activity into structured workflow knowledge.
+- **InsForge** becomes the searchable memory layer for approved outputs.
 
-```bash
-SCREENSHOT_INTERVAL_SECONDS=1
-CHUNK_INTERVAL_SECONDS=6
-RAW_DATA_TTL_SECONDS=300
-ENABLE_CLOUD_SYNC=false
-ENABLE_WORKFLOW_TEMPLATE_CREATION=true
-ENABLE_WORKFLOW_INSIGHTS=true
-ENABLE_AGENT_HANDOFF_DRAFTS=true
-AGENT_HANDOFF_AUTOMATION_SCORE_THRESHOLD=75
-LLM_PROVIDER=vertex_gemini
-LLM_MODEL=gemini-3.5-flash
-GOOGLE_CLOUD_PROJECT=
-GOOGLE_CLOUD_LOCATION=us-central1
-GOOGLE_APPLICATION_CREDENTIALS=
-INSFORGE_BASE_URL=
-INSFORGE_PROJECT_ID=
-INSFORGE_API_KEY=
-INSFORGE_AUTH_ENABLED=true
-INSFORGE_AUTH_TOKEN=
-INSFORGE_CURRENT_USER_ID=
-DEFAULT_WORKFLOW_VISIBILITY=private
-ENABLE_TEAM_SHARING=true
-INSFORGE_SUMMARIES_TABLE=chunk_summaries
-INSFORGE_FINAL_TABLE=final_pseudocode
-INSFORGE_WORKFLOW_TEMPLATES_TABLE=workflow_templates
-INSFORGE_WORKFLOW_INSIGHTS_TABLE=workflow_insights
-INSFORGE_AGENT_HANDOFF_TABLE=agent_handoff_queue
-INSFORGE_WORKFLOW_SEARCH_TABLE=workflow_search_index
-LOCAL_DB_PATH=data/local_tracker.db
-```
-
-## CLI
-
-Initialize backend artifacts:
-
-```bash
-tracker init-backend
-```
-
-Start tracking:
-
-```bash
-tracker start --llm-provider mock
-tracker start --cloud-sync --llm-provider vertex_gemini
-tracker start --cloud-sync --visibility private
-tracker start --cloud-sync --visibility team
-```
-
-Generate final pseudocode from stored chunk summaries:
-
-```bash
-tracker summarize-final --session-id <session_id>
-```
-
-Sync privacy-safe workflow records:
-
-```bash
-tracker sync-summaries --session-id <session_id>
-tracker sync
-
-tracker auth login
-tracker auth status
-tracker auth logout
-```
-
-Workflow intelligence commands:
-
-```bash
-tracker workflows list --mine
-tracker workflows list --team
-tracker workflows search "excel chart" --scope mine
-tracker workflows search "excel chart" --scope team
-tracker workflows show <workflow_id>
-tracker workflows templates
-tracker workflows insights --session-id <session_id>
-tracker workflows handoff --session-id <session_id>
-```
-
-Export final pseudocode:
-
-```bash
-tracker export --session-id <session_id>
-```
-
-### Terminal Workflow Summary
-
-If you want the full terminal-driven flow without the desktop UI, use:
-
-```bash
-python -m pip install -e .[dev]
-python -m pip install -e .[vertex]
-cp .env.example .env
-tracker init-backend
-tracker start --llm-provider mock
-tracker start --cloud-sync --llm-provider vertex_gemini
-tracker summarize-final --session-id <session_id>
-tracker sync
-tracker export --session-id <session_id>
-```
-
-For the desktop UI flow, use the desktop commands above and then run the recorder from the app.
-
-## Remote Schema
-
-InsForge stores only these tables:
-
-- `sessions`
-- `chunk_summaries`
-- `final_pseudocode`
-- `workflow_templates`
-- `workflow_insights`
-- `agent_handoff_queue`
-- `workflow_search_index`
-
-Local SQLite stores:
-
-- raw transient activity data in `events` and `screenshots`
-- chunk summaries in `chunk_summaries`
-- final workflow output in `final_pseudocode`
-- workflow intelligence artifacts for sync and demo queries
-
-Do not add or sync tables for raw screenshots, keyboard logs, mouse logs, OCR logs, or raw events.
-
-Use [`insforge_schema.sql`](/Users/keenan/Documents/AIPent/insforge_schema.sql) to create the backend tables.
-
-## InsForge-Powered Demo Features
-
-This project uses InsForge as the workflow intelligence backend.
-
-During the demo, we can show:
-
-1. A local desktop tracker captures private activity.
-2. Every 6 seconds, the app creates a safe natural-language summary.
-3. Only summaries and workflow outputs are synced to InsForge.
-4. InsForge stores the workflow memory.
-5. The user can search previous workflows.
-6. The app converts sessions into reusable workflow templates.
-7. InsForge stores automation-readiness scores.
-8. High-scoring workflows create draft agent handoff plans.
-9. No screenshots, raw keystrokes, mouse coordinates, or OCR text are uploaded.
-
-This makes InsForge the backend for privacy-safe workflow memory, search, templates, and future automation.
-
-## Hackathon Demo Script
-
-1. Start a session:
-   `tracker start --cloud-sync --llm-provider vertex_gemini`
-2. Perform a short workflow:
-   Example: open a spreadsheet, select data, create a chart, rename it, and save/export.
-3. Stop the session.
-4. Show that raw data stayed local:
-   - screenshots are stored only locally
-   - raw events are stored only locally
-   - InsForge contains no raw screenshots or keystrokes
-5. Show InsForge records:
-   - session metadata
-   - chunk summaries
-   - final pseudocode
-   - workflow insight
-   - workflow template
-   - automation score
-   - agent handoff draft
-6. Search previous workflows:
-   `tracker workflows search "spreadsheet chart"`
-7. Show reusable workflow template:
-   `tracker workflows templates`
-8. Show agent handoff draft:
-   `tracker workflows handoff --session-id <session_id>`
-9. End with:
-   “InsForge turns private desktop activity into safe, searchable, reusable workflow knowledge that can later power approved agent automation.”
-
-## Tests
-
-```bash
-python -m pytest -q
-```
+That combination is what makes the project compelling: native capture on the Mac, careful privacy boundaries, and a backend designed for reusable workflow intelligence instead of raw activity dumping.

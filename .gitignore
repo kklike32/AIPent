@@ -37,6 +37,7 @@ data/exports/*
 
 .vscode/
 .buddybar-control/
+AGENTS.md
 
 # Swift app build output
 macos/BuddyBar/.build/
